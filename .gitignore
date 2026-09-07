@@ -1,0 +1,13 @@
+node_modules/
+dist/
+src-tauri/target/
+vite.config.js
+
+*.log
+.env
+.env.*
+!.env.example
+
+.playwright-cli/
+playwright-report/
+test-results/

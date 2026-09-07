@@ -1,0 +1,17 @@
+[package]
+name = "quadrat-lab"
+version = "0.1.0"
+description = "样方实验教学演示"
+authors = ["quadrat-lab"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "quadrat_lab_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
