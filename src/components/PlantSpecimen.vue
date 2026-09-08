@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import artemisiaImage from "../assets/plants/artemisia.png";
-import dandelionImage from "../assets/plants/dandelion.png";
-import foxtailImage from "../assets/plants/foxtail.png";
-import groundcoverImage from "../assets/plants/groundcover.png";
-import irisImage from "../assets/plants/iris.png";
+import artemisiaImage from "../assets/plants/render/artemisia.webp";
+import dandelionImage from "../assets/plants/render/dandelion.webp";
+import foxtailImage from "../assets/plants/render/foxtail.webp";
+import groundcoverImage from "../assets/plants/render/groundcover.webp";
+import irisImage from "../assets/plants/render/iris.webp";
 import { plantMeta } from "../data";
 import type { PlantKind } from "../types";
 
