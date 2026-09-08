@@ -4,7 +4,8 @@ export default defineConfig({
   testDir: "./tests",
   use: {
     baseURL: "http://127.0.0.1:1420",
-    viewport: { width: 1440, height: 900 },
+    viewport: { width: 1920, height: 1080 },
+    channel: "chrome",
     screenshot: "only-on-failure",
   },
   webServer: {

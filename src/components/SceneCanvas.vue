@@ -1,8 +1,16 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import grasslandArtwork from "../assets/scenes/grassland-bg.png";
+import greenbeltArtwork from "../assets/scenes/greenbelt-soil-bg.png";
 import { plantMeta } from "../data";
 import { fivePointQuadrats } from "../domain/geometry";
-import type { Point, Quadrat, SceneDefinition, PlantKind } from "../types";
+import PlantDistributionLayer from "./PlantDistributionLayer.vue";
+import type { PlantKind, Point, Quadrat, SceneDefinition, SceneKind } from "../types";
+
+const sceneArtworks: Record<SceneKind, string> = {
+  grassland: grasslandArtwork,
+  greenbelt: greenbeltArtwork,
+};
 
 const props = defineProps<{
   scene: SceneDefinition;
@@ -18,149 +26,137 @@ const emit = defineEmits<{
 }>();
 
 const svgRef = ref<SVGSVGElement | null>(null);
-const viewBox = "0 0 760 610";
-const grassField = { left: 24, top: 40, size: 532 };
-const beltField = { left: 26, top: 242, width: 684, height: 68 };
+const grasslandViewBox = { width: 760, height: 760 };
+const greenbeltViewBox = { width: 1200, height: 700 };
+const grassField = { left: 0, top: 0, size: 760 };
+// 与底图中上下石质边界之间的裸土种植区严格对齐。
+const beltField = { left: 32, top: 245, width: 1136, height: 220 };
+const grassColumns = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
+const grassRows = Array.from({ length: 10 }, (_, index) => index + 1);
 
-const targetKind = computed<PlantKind>(() => props.scene.targetPlant);
-const plantsByKind = computed(() => {
-  const groups: Record<PlantKind, typeof props.scene.plants> = { artemisia: [], foxtail: [], groundcover: [], iris: [], dandelion: [] };
-  for (const item of props.scene.plants) groups[item.kind].push(item);
-  return groups;
-});
+const viewBox = computed(() => props.scene.kind === "grassland" ? grasslandViewBox : greenbeltViewBox);
+const selectedQuadrat = computed(() => props.quadrats.find((item) => item.id === props.selectedQuadratId) ?? null);
 
 function mapPoint(x: number, y: number): Point {
   if (props.scene.kind === "grassland") return { x: grassField.left + x / 50 * grassField.size, y: grassField.top + y / 50 * grassField.size };
   return { x: beltField.left + x / 20 * beltField.width, y: beltField.top + y / 2 * beltField.height };
 }
 
-function pathFor(kind: PlantKind, highlighted = false): string {
-  const items = highlighted ? highlightedPlants.value : plantsByKind.value[kind];
-  const color = highlighted ? "#D79A3D" : plantMeta[kind].color;
-  return items.map((item) => {
-    const point = mapPoint(item.x, item.y);
-    const size = Math.max(3, item.size * (props.scene.kind === "grassland" ? 8 : 11));
-    const lean = Math.sin(item.angle * Math.PI / 180) * size * 0.24;
-    return `M ${point.x.toFixed(2)} ${(point.y + size).toFixed(2)} L ${(point.x + lean).toFixed(2)} ${(point.y - size * .25).toFixed(2)} M ${(point.x + lean).toFixed(2)} ${(point.y + size * .1).toFixed(2)} C ${(point.x - size * .55).toFixed(2)} ${(point.y - size * .45).toFixed(2)} ${(point.x - size * .7).toFixed(2)} ${(point.y - size * .9).toFixed(2)} ${(point.x - size * .18).toFixed(2)} ${(point.y - size * 1.08).toFixed(2)} M ${(point.x + lean).toFixed(2)} ${(point.y + size * .1).toFixed(2)} C ${(point.x + size * .55).toFixed(2)} ${(point.y - size * .45).toFixed(2)} ${(point.x + size * .7).toFixed(2)} ${(point.y - size * .9).toFixed(2)} ${(point.x + size * .18).toFixed(2)} ${(point.y - size * 1.08).toFixed(2)}`;
-  }).join(" ");
-}
-
-const selectedQuadrat = computed(() => props.quadrats.find((item) => item.id === props.selectedQuadratId) ?? null);
-const highlightedPlants = computed(() => {
-  if (!props.counted || !selectedQuadrat.value) return [];
-  const q = selectedQuadrat.value;
-  return props.scene.plants.filter((plant) => plant.kind === targetKind.value && plant.x >= q.x && plant.x < q.x + q.size && plant.y >= q.y && plant.y < q.y + q.size);
-});
-const baseTargetPath = computed(() => pathFor(targetKind.value));
-const baseFoxtailPath = computed(() => pathFor("foxtail"));
-const baseGroundcoverPath = computed(() => pathFor("groundcover"));
-const baseIrisPath = computed(() => pathFor("iris"));
-const baseDandelionPath = computed(() => pathFor("dandelion"));
-const highlightedPath = computed(() => pathFor(targetKind.value, true));
-
-const guideQuadrats = computed(() => {
-  if (props.scene.kind !== "grassland" || !props.guideVisible || props.quadrats.length === 0) return [];
-  return fivePointQuadrats(props.quadrats[0]!, props.scene);
+const guideQuadrats = computed(() => props.scene.kind === "grassland" && props.guideVisible && props.quadrats.length ? fivePointQuadrats(props.quadrats[0]!, props.scene) : []);
+const guideLinePath = computed(() => {
+  if (guideQuadrats.value.length !== 5) return "";
+  const points = guideQuadrats.value.map((quadrat) => mapPoint(quadrat.x + .5, quadrat.y + .5));
+  const tl = points[1]!;
+  const tr = points[2]!;
+  const bl = points[3]!;
+  const br = points[4]!;
+  return `M ${tl.x} ${tl.y} L ${br.x} ${br.y} M ${tr.x} ${tr.y} L ${bl.x} ${bl.y}`;
 });
 
 function mapQuadrat(quadrat: Quadrat) {
   const topLeft = mapPoint(quadrat.x, quadrat.y);
   const bottomRight = mapPoint(quadrat.x + quadrat.size, quadrat.y + quadrat.size);
-  return { x: topLeft.x, y: topLeft.y, width: bottomRight.x - topLeft.x, height: bottomRight.y - topLeft.y };
+  return {
+    x: topLeft.x,
+    y: topLeft.y,
+    width: bottomRight.x - topLeft.x,
+    height: bottomRight.y - topLeft.y,
+  };
+}
+
+function quadratLabelY(quadrat: Quadrat): number {
+  return Math.max(8, mapPoint(quadrat.x, quadrat.y).y - 32);
 }
 
 function handleCanvasClick(event: MouseEvent): void {
   const svg = svgRef.value;
   if (!svg) return;
   const bounds = svg.getBoundingClientRect();
-  const ratioX = (event.clientX - bounds.left) / bounds.width;
-  const ratioY = (event.clientY - bounds.top) / bounds.height;
-  if (props.scene.kind === "grassland") emit("canvasClick", { x: ratioX * 760 / grassField.size * 50 - grassField.left / grassField.size * 50, y: ratioY * 610 / grassField.size * 50 - grassField.top / grassField.size * 50 });
-  else emit("canvasClick", { x: (ratioX * 760 - beltField.left) / beltField.width * 20, y: (ratioY * 610 - beltField.top) / beltField.height * 2 });
+  const x = (event.clientX - bounds.left) / bounds.width * viewBox.value.width;
+  const y = (event.clientY - bounds.top) / bounds.height * viewBox.value.height;
+  if (props.scene.kind === "grassland") emit("canvasClick", { x: (x - grassField.left) / grassField.size * 50, y: (y - grassField.top) / grassField.size * 50 });
+  else emit("canvasClick", { x: (x - beltField.left) / beltField.width * 20, y: (y - beltField.top) / beltField.height * 2 });
 }
 </script>
 
 <template>
   <div class="scene-canvas-shell">
-    <svg ref="svgRef" class="scene-canvas" :viewBox="viewBox" role="img" :aria-label="`${scene.title}交互画布`" @click="handleCanvasClick">
-      <defs>
-        <pattern id="grass-grid" width="28" height="28" patternUnits="userSpaceOnUse">
-          <path d="M28 0H0V28" fill="none" stroke="#D1E1D0" stroke-width="1" opacity=".42" />
-        </pattern>
-        <pattern id="road-lines" width="34" height="34" patternUnits="userSpaceOnUse" patternTransform="rotate(18)">
-          <path d="M0 0V34" stroke="#A4A9A3" stroke-width="2" opacity=".33" />
-        </pattern>
-      </defs>
+    <div class="scene-artboard" :class="`scene-artboard-${scene.kind}`">
+      <img
+        v-for="(source, kind) in sceneArtworks"
+        :key="kind"
+        class="scene-artwork"
+        :class="{ active: scene.kind === kind }"
+        :src="source"
+        :alt="scene.kind === kind ? `${scene.title}场景底图` : ''"
+        :aria-hidden="scene.kind !== kind"
+      />
+      <PlantDistributionLayer :scene="scene" :selected-quadrat="selectedQuadrat" :counted="counted" />
+      <svg ref="svgRef" class="scene-canvas" :viewBox="`0 0 ${viewBox.width} ${viewBox.height}`" preserveAspectRatio="none" role="img" :aria-label="`${scene.title}交互画布`" @click="handleCanvasClick">
+        <template v-if="scene.kind === 'grassland'">
+          <g class="grass-grid-lines" aria-hidden="true">
+            <line v-for="value in 9" :key="`vertical-${value}`" :x1="value / 10 * grassField.size" y1="0" :x2="value / 10 * grassField.size" :y2="grassField.size" />
+            <line v-for="value in 9" :key="`horizontal-${value}`" x1="0" :y1="value / 10 * grassField.size" :x2="grassField.size" :y2="value / 10 * grassField.size" />
+            <text v-for="(label, index) in grassColumns" :key="`column-${label}`" :x="(index + .5) / 10 * grassField.size" y="21">{{ label }}</text>
+            <text v-for="label in grassRows" :key="`row-${label}`" x="17" :y="(label - .5) / 10 * grassField.size + 5">{{ label }}</text>
+          </g>
+          <g class="five-point-guide">
+            <path v-if="guideQuadrats.length" :d="guideLinePath" />
+            <rect v-for="guide in guideQuadrats" :key="guide.id" v-bind="mapQuadrat(guide)" class="guide-quadrat" :class="{ 'guide-center': guide.index === 1 }" />
+          </g>
+          <g class="scale-mark"><path d="M34 720H230M34 713V727M132 713V727M230 713V727" /><text x="34" y="747">0</text><text x="125" y="747">25</text><text x="216" y="747">50m</text></g>
+        </template>
 
-      <template v-if="scene.kind === 'grassland'">
-        <rect x="0" y="0" width="760" height="610" rx="26" fill="#DCE9D9" />
-        <rect :x="grassField.left" :y="grassField.top" :width="grassField.size" :height="grassField.size" rx="20" fill="url(#grass-grid)" opacity=".72" />
-        <path d="M24 486C150 446 222 507 336 475S466 448 556 487V572H24Z" fill="#C7DDC5" opacity=".94" />
-        <path :d="baseTargetPath" fill="none" stroke="#D79A3D" stroke-width="1.35" stroke-linecap="round" opacity=".62" />
-        <path :d="baseFoxtailPath" fill="none" stroke="#5B8B70" stroke-width="1.25" stroke-linecap="round" opacity=".7" />
-        <path :d="baseGroundcoverPath" fill="none" stroke="#89A99A" stroke-width="1.1" stroke-linecap="round" opacity=".7" />
-        <path v-if="counted && selectedQuadratId" :d="highlightedPath" fill="none" stroke="#17372A" stroke-width="2.25" stroke-linecap="round" />
-        <g class="canvas-label">
-          <rect x="44" y="58" width="178" height="38" rx="12" fill="#FFFFFF" opacity=".9" />
-          <text x="60" y="82">草原 50m × 50m · 2500m²</text>
-        </g>
-        <g v-if="guideQuadrats.length" class="five-point-guide">
-          <rect x="0" y="0" width="0" height="0" />
-          <path :d="`M ${mapPoint(guideQuadrats[1]!.x + .5, guideQuadrats[1]!.y + .5).x} ${mapPoint(guideQuadrats[1]!.x + .5, guideQuadrats[1]!.y + .5).y} L ${mapPoint(guideQuadrats[4]!.x + .5, guideQuadrats[4]!.y + .5).x} ${mapPoint(guideQuadrats[4]!.x + .5, guideQuadrats[4]!.y + .5).y} M ${mapPoint(guideQuadrats[2]!.x + .5, guideQuadrats[2]!.y + .5).x} ${mapPoint(guideQuadrats[2]!.x + .5, guideQuadrats[2]!.y + .5).y} L ${mapPoint(guideQuadrats[3]!.x + .5, guideQuadrats[3]!.y + .5).x} ${mapPoint(guideQuadrats[3]!.x + .5, guideQuadrats[3]!.y + .5).y}`" />
-          <rect v-for="guide in guideQuadrats" :key="guide.id" v-bind="mapQuadrat(guide)" class="guide-quadrat" :class="{ 'guide-center': guide.index === 1 }" />
-        </g>
-      </template>
+        <template v-else>
+          <g class="greenbelt-overlay" aria-hidden="true">
+            <text x="36" y="218" class="road-label">乔木带</text>
+            <text x="36" y="585" class="road-label">道路</text>
+            <g class="greenbelt-sample-guides">
+              <line v-for="quadrat in quadrats" :key="`drop-${quadrat.id}`" :x1="mapQuadrat(quadrat).x + mapQuadrat(quadrat).width / 2" y1="465" :x2="mapQuadrat(quadrat).x + mapQuadrat(quadrat).width / 2" y2="590" />
+            </g>
+            <g class="belt-scale"><path d="M50 596H1150M50 590V602M215 590V602M380 590V602M545 590V602M710 590V602M875 590V602M1040 590V602M1150 590V602" /><text x="48" y="622">0m</text><text x="200" y="622">3m</text><text x="365" y="622">6m</text><text x="530" y="622">9m</text><text x="694" y="622">12m</text><text x="858" y="622">15m</text><text x="1023" y="622">18m</text><text x="1127" y="622">20m</text></g>
+            <g class="dimension-guide"><path d="M85 660H1115" /><path d="M85 660l13-7M85 660l13 7M1115 660l-13-7M1115 660l-13 7" /><rect x="544" y="642" width="112" height="32" rx="9" fill="#3d7ea6" /><text x="563" y="664">等距 3m</text></g>
+          </g>
+        </template>
 
-      <template v-else>
-        <rect x="0" y="0" width="760" height="610" rx="26" fill="#E9EFE7" />
-        <path d="M0 75H760V205H0Z" fill="#B5C7AF" />
-        <path d="M0 0H760V76H0Z" fill="#C8D8C2" />
-        <g class="trees" fill="#2F6B4F">
-          <g v-for="tree in [70, 175, 280, 390, 500, 620, 710]" :key="tree" :transform="`translate(${tree} 42)`"><circle cx="0" cy="0" r="19" fill="#4F7C5A" /><circle cx="-16" cy="9" r="13" fill="#69916C" /><circle cx="18" cy="10" r="14" fill="#3E6C4C" /><rect x="-3" y="18" width="6" height="26" rx="3" fill="#765E4C" /></g>
+        <g class="quadrats">
+          <g v-for="quadrat in quadrats" :key="quadrat.id" class="quadrat" :class="{ selected: quadrat.id === selectedQuadratId }" @click.stop="emit('selectQuadrat', quadrat.id)">
+            <rect v-bind="mapQuadrat(quadrat)" />
+            <rect :x="mapQuadrat(quadrat).x" :y="quadratLabelY(quadrat)" width="82" height="27" rx="8" class="quadrat-label-bg" />
+            <text :x="mapQuadrat(quadrat).x + 11" :y="quadratLabelY(quadrat) + 19">样方 {{ quadrat.index }}</text>
+          </g>
         </g>
-        <rect :x="beltField.left" :y="beltField.top - 12" :width="beltField.width" :height="beltField.height + 24" rx="16" fill="#D6E4D1" stroke="#B7CEB9" stroke-width="2" />
-        <path :d="baseIrisPath" fill="none" stroke="#6D73A8" stroke-width="2.1" stroke-linecap="round" />
-        <path :d="baseDandelionPath" fill="none" stroke="#D79A3D" stroke-width="1.65" stroke-linecap="round" />
-        <path :d="baseFoxtailPath" fill="none" stroke="#5B8B70" stroke-width="1.45" stroke-linecap="round" />
-        <path v-if="counted && selectedQuadratId" :d="highlightedPath" fill="none" stroke="#17372A" stroke-width="2.6" stroke-linecap="round" />
-        <rect x="0" y="344" width="760" height="175" fill="#777D78" />
-        <rect x="0" y="344" width="760" height="175" fill="url(#road-lines)" />
-        <path d="M0 344H760" stroke="#ECE5C9" stroke-width="8" stroke-dasharray="22 14" />
-        <path d="M0 432H760" stroke="#D5D9D4" stroke-width="3" stroke-dasharray="28 22" opacity=".7" />
-        <g class="canvas-label">
-          <rect x="44" y="222" width="180" height="38" rx="12" fill="#FFFFFF" opacity=".9" />
-          <text x="60" y="246">绿化带 20m × 2m · 40m²</text>
-          <text x="55" y="386" fill="#FFFFFF" opacity=".88">马路</text>
-        </g>
-      </template>
-
-      <g class="quadrats">
-        <g v-for="quadrat in quadrats" :key="quadrat.id" class="quadrat" :class="{ selected: quadrat.id === selectedQuadratId }" @click.stop="emit('selectQuadrat', quadrat.id)">
-          <rect v-bind="mapQuadrat(quadrat)" />
-          <text :x="mapQuadrat(quadrat).x + 5" :y="mapQuadrat(quadrat).y - 8">样方 {{ quadrat.index }}</text>
-        </g>
-      </g>
-    </svg>
-    <div class="canvas-caption">
-      <span><i class="dot target" />{{ plantMeta[scene.targetPlant].label }}为目标植物</span>
-      <span><i class="dot sample" />点击画布放置 1m × 1m 样方</span>
+      </svg>
     </div>
+    <div class="canvas-caption"><span><i class="dot target" />{{ plantMeta[scene.targetPlant].label }}为目标植物</span><span><i class="dot guide" />{{ scene.kind === 'grassland' ? '对角 X 辅助线' : '等距 3m 辅助线' }}</span><span>点击样方可查看统计</span></div>
   </div>
 </template>
 
 <style scoped>
-.scene-canvas-shell { min-width: 0; }
-.scene-canvas { display: block; width: 100%; height: auto; overflow: visible; cursor: crosshair; }
-.canvas-label text { fill: #5B7165; font-size: 12px; font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif; }
-.quadrats rect { fill: rgba(255,255,255,.14); stroke: rgba(255,255,255,.92); stroke-width: 2; vector-effect: non-scaling-stroke; }
-.quadrats text { fill: #17372A; font-size: 12px; font-weight: 700; font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif; pointer-events: none; }
-.quadrats .selected rect { fill: rgba(215,154,61,.24); stroke: #D79A3D; stroke-width: 3; }
-.guide-quadrat { fill: rgba(255,255,255,.08); stroke: #4E7DA8; stroke-width: 1.6; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
-.guide-center { fill: rgba(215,154,61,.2); stroke: #D79A3D; stroke-width: 2.5; stroke-dasharray: none; }
-.five-point-guide path { fill: none; stroke: #4E7DA8; stroke-width: 1.8; stroke-dasharray: 6 6; opacity: .78; vector-effect: non-scaling-stroke; }
-.canvas-caption { display: flex; justify-content: space-between; gap: 12px; padding: 10px 4px 0; color: #718178; font-size: 12px; }
+.scene-canvas-shell { min-width: 0; min-height: 0; height: 100%; flex: 1 1 auto; display: flex; flex-direction: column; gap: 8px; }
+.scene-artboard { position: relative; min-width: 0; min-height: 0; flex: 1 1 auto; width: 100%; overflow: hidden; border-radius: 18px; background: #e6ece5; box-shadow: inset 0 0 0 1px rgba(23, 63, 45, .12); }
+.scene-artboard-grassland { width: min(100%, 760px); aspect-ratio: 1; max-width: 100%; max-height: 100%; align-self: center; }
+.scene-artwork { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0; }
+.scene-artwork.active { opacity: 1; }
+.scene-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; overflow: visible; cursor: crosshair; }
+.grass-grid-lines line { stroke: rgba(248, 251, 245, .3); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.grass-grid-lines text { fill: rgba(248, 251, 245, .92); font-size: 14px; font-weight: 800; text-anchor: middle; paint-order: stroke; stroke: rgba(23, 63, 45, .36); stroke-width: 4px; stroke-linejoin: round; }
+.greenbelt-overlay text, .scale-mark text, .belt-scale text, .dimension-guide text, .road-label { fill: #f8fbf5; font-size: 15px; font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif; paint-order: stroke; stroke: rgba(23, 63, 45, .28); stroke-width: 3px; }
+.road-label { font-size: 17px; font-weight: 800; opacity: .92; }
+.scale-mark path, .belt-scale path { fill: none; stroke: #f8fbf5; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.quadrats rect { fill: rgba(255,255,255,.08); stroke: rgba(255,255,255,.92); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.quadrats .quadrat-label-bg { fill: #173f2d; stroke: none; }
+.quadrats text { fill: #fff; font-size: 14px; font-weight: 800; font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif; pointer-events: none; }
+.quadrats .selected rect:first-child { fill: rgba(215,154,61,.28); stroke: #f1a62d; stroke-width: 3; }
+.quadrats .selected .quadrat-label-bg { fill: #d88916; }
+.guide-quadrat { fill: rgba(255,255,255,.08); stroke: #fff; stroke-width: 2; stroke-dasharray: 7 5; vector-effect: non-scaling-stroke; }
+.guide-center { fill: rgba(215,154,61,.22); stroke: #f1a62d; stroke-width: 3; stroke-dasharray: none; }
+.five-point-guide path { fill: none; stroke: #fff; stroke-width: 2.6; stroke-dasharray: 8 7; opacity: .95; vector-effect: non-scaling-stroke; }
+.dimension-guide path:first-child { fill: none; stroke: #3d9ad0; stroke-width: 3; vector-effect: non-scaling-stroke; }
+.greenbelt-sample-guides line { stroke: #3d9ad0; stroke-width: 2; stroke-dasharray: 7 5; opacity: .9; vector-effect: non-scaling-stroke; }
+.canvas-caption { display: flex; justify-content: space-between; gap: 12px; padding: 4px 3px 0; color: #718178; font-size: 12px; flex: none; }
 .canvas-caption span { display: inline-flex; align-items: center; gap: 6px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.dot.target { background: #D79A3D; }
-.dot.sample { background: #4E7DA8; }
+.dot.target { background: #d79a3d; }
+.dot.guide { background: #3d7ea6; }
 </style>

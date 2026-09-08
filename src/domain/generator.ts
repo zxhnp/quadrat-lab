@@ -24,24 +24,52 @@ function clusteredPoint(random: () => number, width: number, height: number, cen
   };
 }
 
+function coveredPoint(
+  random: () => number,
+  width: number,
+  height: number,
+  centers: Array<{ x: number; y: number; spread: number }>,
+  index: number,
+  total: number,
+): { x: number; y: number } {
+  // 先用网格覆盖保证每个区域都有植物，再用斑块采样保留草原的聚集感。
+  const coverageCount = Math.floor(total * .42);
+  if (index < coverageCount) {
+    const columns = 5;
+    const rows = 5;
+    const cell = index % (columns * rows);
+    const column = cell % columns;
+    const row = Math.floor(cell / columns);
+    return {
+      x: (column + .1 + random() * .8) / columns * width,
+      y: (row + .1 + random() * .8) / rows * height,
+    };
+  }
+  return clusteredPoint(random, width, height, centers);
+}
+
 function createGrassland(seed: number): SceneDefinition {
   const random = mulberry32(seed);
   const plants: Plant[] = [];
   const targetCenters = [
-    { x: 10, y: 12, spread: 14 }, { x: 24, y: 25, spread: 16 }, { x: 40, y: 16, spread: 12 },
-    { x: 16, y: 40, spread: 18 }, { x: 38, y: 38, spread: 16 }, { x: 29, y: 10, spread: 10 },
+    { x: 9, y: 9, spread: 13 }, { x: 25, y: 10, spread: 14 }, { x: 42, y: 9, spread: 13 },
+    { x: 10, y: 25, spread: 15 }, { x: 27, y: 25, spread: 16 }, { x: 44, y: 25, spread: 14 },
+    { x: 9, y: 42, spread: 14 }, { x: 25, y: 41, spread: 16 }, { x: 42, y: 42, spread: 14 },
   ];
-  const otherCenters = [{ x: 8, y: 8, spread: 20 }, { x: 30, y: 20, spread: 24 }, { x: 44, y: 42, spread: 18 }];
+  const otherCenters = [
+    { x: 8, y: 8, spread: 18 }, { x: 25, y: 18, spread: 22 }, { x: 44, y: 10, spread: 18 },
+    { x: 12, y: 38, spread: 20 }, { x: 33, y: 34, spread: 22 }, { x: 45, y: 44, spread: 16 },
+  ];
   for (let i = 0; i < 1650; i++) {
-    const point = clusteredPoint(random, 50, 50, targetCenters);
+    const point = coveredPoint(random, 50, 50, targetCenters, i, 1650);
     plants.push(plant(`artemisia-${i}`, "artemisia", point.x, point.y, random, 0.55));
   }
   for (let i = 0; i < 1150; i++) {
-    const point = clusteredPoint(random, 50, 50, otherCenters);
+    const point = coveredPoint(random, 50, 50, otherCenters, i, 1150);
     plants.push(plant(`foxtail-${i}`, "foxtail", point.x, point.y, random, 0.66));
   }
   for (let i = 0; i < 800; i++) {
-    const point = clusteredPoint(random, 50, 50, otherCenters);
+    const point = coveredPoint(random, 50, 50, otherCenters, i, 800);
     plants.push(plant(`groundcover-${i}`, "groundcover", point.x, point.y, random, 0.48));
   }
   return {
@@ -59,8 +87,15 @@ function createGrassland(seed: number): SceneDefinition {
 function createGreenbelt(seed: number): SceneDefinition {
   const random = mulberry32(seed);
   const plants: Plant[] = [];
-  for (let i = 0; i < 11; i++) {
-    plants.push(plant(`iris-${i}`, "iris", 1.5 + i * 1.65 + (random() - 0.5) * 0.2, 0.45 + (random() - 0.5) * 0.14, random, 0.9));
+  const irisRows = 3;
+  const irisColumns = 11;
+  for (let row = 0; row < irisRows; row++) {
+    for (let column = 0; column < irisColumns; column++) {
+      const stagger = row % 2 === 0 ? 0 : .28;
+      const x = Math.min(19.65, Math.max(.35, (column + .5 + stagger) / irisColumns * 20 + (random() - .5) * .24));
+      const y = (row + .5) / irisRows * 2 + (random() - .5) * .1;
+      plants.push(plant(`iris-${row}-${column}`, "iris", x, y, random, 0.9));
+    }
   }
   for (let i = 0; i < 50; i++) {
     plants.push(plant(`dandelion-${i}`, "dandelion", 0.25 + random() * 19.5, 0.3 + random() * 1.35, random, 0.6));
