@@ -43,6 +43,7 @@ const props = defineProps<{
   scene: SceneDefinition;
   selectedQuadrat: Quadrat | null;
   counted: boolean;
+  displayScale: number;
 }>();
 
 const canvasRef = useTemplateRef<HTMLCanvasElement>("canvas");
@@ -53,7 +54,8 @@ let mounted = false;
 let imageLoadVersion = 0;
 let overviewPlants: Plant[] = [];
 let visiblePlantSet = new Set<Plant>();
-let renderedPlants: Plant[] = [];
+const renderedPlants = shallowRef<Plant[]>([]);
+const zoomPlants = shallowRef<Plant[]>([]);
 
 function mapPoint(plant: Pick<Plant, "x" | "y">, sceneKind = props.scene.kind) {
   if (sceneKind === "grassland") return { x: plant.x / 50 * 760, y: plant.y / 50 * 760 };
@@ -92,32 +94,58 @@ function refreshOverviewPlants(): void {
 }
 
 function refreshRenderedPlants(): void {
-  const selectedPlants = props.selectedQuadrat
-    ? props.scene.plants.filter((plant) => isInsideSelectedTarget(plant) && !visiblePlantSet.has(plant))
+  const focus = props.selectedQuadrat
+    ? { x: props.selectedQuadrat.x + .5, y: props.selectedQuadrat.y + .5 }
+    : { x: props.scene.widthMeters / 2, y: props.scene.heightMeters / 2 };
+  const margin = props.scene.kind === "grassland" && props.displayScale > 1 ? 2.7 : 0;
+  const nearbyPlants = margin
+    ? props.scene.plants.filter((plant) => Math.abs(plant.x - focus.x) <= margin && Math.abs(plant.y - focus.y) <= margin)
     : [];
-  renderedPlants = [...overviewPlants, ...selectedPlants]
+  zoomPlants.value = nearbyPlants.sort((first, second) => mapPoint(first).y - mapPoint(second).y);
+  const selectedPlants = nearbyPlants.filter((plant) => !visiblePlantSet.has(plant));
+  renderedPlants.value = [...overviewPlants, ...selectedPlants]
     .sort((first, second) => mapPoint(first).y - mapPoint(second).y);
+}
+
+function domPlantStyle(plant: Plant) {
+  const point = mapPoint(plant);
+  const style = plantStyles[plant.kind];
+  const sceneScale = props.scene.kind === "grassland" ? .68 : .7;
+  const irisScale = props.scene.kind === "greenbelt" && plant.kind === "iris" ? .82 : 1;
+  const height = plant.size * style.scale * sceneScale * irisScale * 4.2;
+  const width = height * style.aspect;
+  const viewBoxWidth = props.scene.kind === "grassland" ? 760 : 1200;
+  const viewBoxHeight = props.scene.kind === "grassland" ? 760 : 700;
+  return {
+    left: `${point.x / viewBoxWidth * 100}%`,
+    top: `${point.y / viewBoxHeight * 100}%`,
+    width: `${width}px`,
+    height: `${height}px`,
+    transform: `translate(-50%, -100%) scale(${1 / Math.max(1, props.displayScale)}) rotate(${plant.angle}deg)`,
+  };
 }
 
 function draw(): void {
   const canvas = canvasRef.value;
   if (!canvas || !mounted) return;
-  const bounds = canvas.getBoundingClientRect();
-  if (!bounds.width || !bounds.height) return;
-  const ratio = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = Math.round(bounds.width * ratio);
-  canvas.height = Math.round(bounds.height * ratio);
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  if (!width || !height) return;
+  const sceneScale = Number.parseFloat(getComputedStyle(canvas).getPropertyValue("--scene-display-scale")) || 1;
+  const ratio = Math.min((window.devicePixelRatio || 1) * Math.min(sceneScale, 3), 4);
+  canvas.width = Math.round(width * ratio);
+  canvas.height = Math.round(height * ratio);
   const context = canvas.getContext("2d");
   if (!context) return;
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "high";
 
   context.setTransform(ratio, 0, 0, ratio, 0, 0);
-  context.clearRect(0, 0, bounds.width, bounds.height);
+  context.clearRect(0, 0, width, height);
   const viewBoxWidth = props.scene.kind === "grassland" ? 760 : 1200;
   const viewBoxHeight = props.scene.kind === "grassland" ? 760 : 700;
   context.save();
-  context.scale(bounds.width / viewBoxWidth, bounds.height / viewBoxHeight);
+  context.scale(width / viewBoxWidth, height / viewBoxHeight);
   if (props.scene.kind === "grassland") {
     context.beginPath();
     context.roundRect(0, 0, 760, 760, 14);
@@ -128,14 +156,15 @@ function draw(): void {
     context.clip();
   }
 
-  for (const plant of renderedPlants) {
+  for (const plant of renderedPlants.value) {
     const image = imageCache.get(plant.kind);
     if (!image) continue;
     const point = mapPoint(plant);
     const style = plantStyles[plant.kind];
     const sceneScale = props.scene.kind === "grassland" ? .68 : .7;
     const irisScale = props.scene.kind === "greenbelt" && plant.kind === "iris" ? .82 : 1;
-    const height = plant.size * style.scale * sceneScale * irisScale;
+    const zoomSizeCompensation = props.scene.kind === "grassland" ? Math.pow(Math.max(1, props.displayScale), .75) : 1;
+    const height = plant.size * style.scale * sceneScale * irisScale / zoomSizeCompensation;
     const width = height * style.aspect;
     const sourceHeight = image.naturalHeight * (1 - style.cropBottom);
     const selected = isSelectedTarget(plant);
@@ -143,19 +172,11 @@ function draw(): void {
     context.translate(point.x, point.y);
     context.rotate(plant.angle * Math.PI / 180);
     context.globalAlpha = selected ? 1 : .98;
-    context.fillStyle = selected ? "rgba(255, 183, 50, .62)" : "rgba(17, 49, 24, .28)";
+    context.fillStyle = "rgba(17, 49, 24, .28)";
     context.beginPath();
     context.ellipse(0, 0, Math.max(2, width * .3), Math.max(1, height * .055), 0, 0, Math.PI * 2);
     context.fill();
     context.drawImage(image, 0, 0, image.naturalWidth, sourceHeight, -width / 2, -height, width, height);
-    if (selected) {
-      context.globalAlpha = .9;
-      context.strokeStyle = "#f2aa38";
-      context.lineWidth = 1.8;
-      context.beginPath();
-      context.arc(0, -height * .46, Math.max(3, height * .18), 0, Math.PI * 2);
-      context.stroke();
-    }
     context.restore();
   }
   context.restore();
@@ -185,7 +206,7 @@ watch(() => props.scene, (nextScene) => {
   void loadSceneImages(nextScene.kind);
 });
 
-watch(() => [props.selectedQuadrat, props.counted], () => {
+watch(() => [props.selectedQuadrat, props.counted, props.displayScale], () => {
   refreshRenderedPlants();
   draw();
 });
@@ -208,10 +229,15 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <canvas ref="canvas" class="distribution-layer" :class="{ refreshing }" aria-hidden="true" />
+  <canvas ref="canvas" v-show="displayScale === 1" class="distribution-layer" :class="{ refreshing }" aria-hidden="true" />
+  <div v-if="displayScale > 1" class="zoom-plant-layer" aria-hidden="true">
+    <img v-for="plant in zoomPlants" :key="plant.id" :src="plantAssets[plant.kind]" alt="" :style="domPlantStyle(plant)" />
+  </div>
 </template>
 
 <style scoped>
 .distribution-layer { position: absolute; inset: 0; display: block; width: 100%; height: 100%; pointer-events: none; opacity: 1; filter: saturate(1.08) contrast(1.04); transition: opacity 130ms ease, filter 130ms ease; }
 .distribution-layer.refreshing { opacity: .2; filter: saturate(.82); }
+.zoom-plant-layer { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.zoom-plant-layer img { position: absolute; display: block; max-width: none; object-fit: contain; object-position: center bottom; transform-origin: 50% 100%; filter: saturate(1.08) contrast(1.04) drop-shadow(0 2px 2px rgba(18, 48, 28, .28)); }
 </style>

@@ -1,6 +1,6 @@
 # Session Handoff：样方实验
 
-更新时间：2026-09-08
+更新时间：2026-09-09
 
 ## 项目定位
 
@@ -13,129 +13,87 @@
 ## 技术栈
 
 - Vue 3 + Composition API + TypeScript
-- Vite
-- Element Plus：外围按钮、卡片、标签、表格、提示和布局组件
-- Canvas：按场景懒加载和分层绘制植物模型
-- SVG：样方、场景辅助线和交互热区
-- WebP：场景底图和 Canvas 专用轻量植物切图
+- Vite + Element Plus
+- SVG：样方、辅助线、标签和交互热区
+- Canvas / DOM 图片节点：植物动态分布与高倍清晰渲染
+- WebP：场景底图和植物运行时素材
 - Tauri 2：Windows x64 NSIS 安装包
 - Vitest：领域逻辑测试
 - Playwright：浏览器 E2E 测试
 
-Nuxt 没有采用。当前产品是离线单页桌面工具，不需要 SSR 或服务端路由，Vite 更轻量。
-
 ## 当前已实现
+
+### 页面排版
+
+- 顶部保留应用导航与实验步骤。
+- 左侧场景选择和植物标本栏已压缩为窄栏，常规桌面视口无需垂直滚动。
+- 新增独立的 PS 风格取样工具栏，工具包括光标、框选、拖动画布、辅助线、缩放、重置、撤销和清空。
+- 中央画布承担场景展示与取样交互，右侧统计栏承担样方记录、计数和估算。
+- 移除底部重复的流程展示与操作区，四栏布局在同一主工作区内对齐。
 
 ### 草原场景
 
-- 场地：`50m × 50m`，面积 `2500m²`
-- 目标植物：茵陈蒿
-- 支持自由点击放置 `1m × 1m` 样方
-- 支持中心样方 + X 型对角线五点取样
-- 草原使用棕色裸土底图，不显示网格和比例刻度
-- 茵陈蒿按每平方米约 5 株均匀覆盖，狗尾巴草和小草保留随机斑块分布
-- 三类植物使用清晰描边切图，在泥土纹理上可直接区分
-- 目标植物、狗尾巴草和小草均基于可复现随机种子生成
+- 场地：`50m × 50m`，面积 `2500m²`。
+- 目标植物：茵陈蒿；辅助植物：狗尾巴草、小草。
+- 使用棕色裸土底图，不显示网格和刻度。
+- 植物按可复现随机种子生成，草原保持斑块式自然分布。
+- 框选工具支持鼠标拖拽选择固定 `1m × 1m` 样方，不能越界或重叠。
+- 支持光标选择、拖动画布、缩放和重置；高倍缩放时样方按比例放大。
+- 中心样方、X 型对角线和五点取样逻辑继续保留。
 
 ### 绿化带场景
 
-- 场地：`20m × 2m`，面积 `40m²`
-- 目标植物：蒲公英
-- 场景包含道路、树木、鸢尾花和狗尾巴草，种植区使用棕色裸土底图
-- 鸢尾花沿绿化带上下各成一行；蒲公英和狗尾巴草分散在种植区各处
-- 前两个样方确定间距
-- 后续点击自动保持水平和等距
-- 支持“标准铺满绿化带”
-- 等距位置越界时拒绝添加，不会通过裁剪破坏等距规则
-- 绿化带中的 `1m × 1m` 样方按屏幕宽度基准绘制为正方形
+- 场地：`20m × 2m`，面积 `40m²`。
+- 目标植物：蒲公英；辅助植物：鸢尾花、狗尾巴草。
+- 使用与草原一致的棕色裸土种植区底图，同时保留道路、树木和边界层次。
+- 鸢尾花沿绿化带上下各成一行；蒲公英和狗尾巴草在种植区内不规则分散。
+- 前两个样方确定间距，后续样方自动水平等距吸附；支持“标准铺满绿化带”。
+- 绿化带样方保持 `1m × 1m` 正方形，越界或重叠时拒绝添加。
 
-### 通用规则
+### 样方与统计
 
-- 样方不可越界、不可重叠
-- 边界规则：计上不计下，计左不计右
-- 选中样方后内部高亮，并在右上角显示实时密度（如 `5株/㎡`）
-- 支持撤销、清空、重新生成植物
-- 支持目标植物数量、样方密度、平均密度、真实密度和误差对比
+- 选中样方后只在样方内部显示橙色高亮。
+- 样方右上角显示当前株数和密度，例如 `5株/㎡`。
+- 右侧显示样方数量、目标植物数量、样方密度、平均密度和真实结果。
+- 支持标记并计数、撤销、清空和重新生成植物。
+- 边界规则：计上不计下，计左不计右。
 
 ## 渲染与性能说明
 
-- 页面只加载当前场景底图以及该场景用到的植物切图，不再一次加载全部资源
-- Canvas 总览层按物种做确定性抽样；样方内部的目标植物始终补充到绘制列表，保证统计与画面一致
-- 移除了逐株实时模糊阴影，改用预生成清晰描边，降低草原首次渲染和场景切换开销
-- 草原/绿化带底图 WebP 约为 `789KB` / `431KB`；植物渲染切图单张约为 `67KB–116KB`
-- 原始 PNG 保留为源素材，运行时统一使用 `src/assets/plants/render/` 下的 WebP
+- 页面按场景预载对应底图和植物素材，场景切换不再重复等待资源。
+- 草原高倍缩放使用平铺土壤背景，避免直接放大整张位图。
+- 高倍视口附近的植物使用独立图片节点渲染，保持茵陈蒿、狗尾巴草和小草的轮廓清晰、易于辨认。
+- SVG 仅承载交互层，不再承担整片草地的静态绘制。
+- 植物分布使用确定性随机种子，重新生成植物时画面和统计数据同步更新。
 
 ## 关键文件
 
-- `src/App.vue`：应用状态、场景切换、样方操作和结果流程
-- `src/components/SceneCanvas.vue`：专业 SVG 交互画布
-- `src/components/PlantDistributionLayer.vue`：植物 Canvas 渲染、按场景懒加载和可视植物抽样
-- `src/components/PlantSpecimen.vue`：植物标本卡片
-- `src/components/AppLogo.vue`：应用标志
+- `src/App.vue`：应用状态、场景切换、样方操作和右侧统计流程
+- `src/components/SamplingToolbar.vue`：独立取样工具栏
+- `src/components/SceneCanvas.vue`：缩放、平移、框选和 SVG 交互画布
+- `src/components/PlantDistributionLayer.vue`：动态植物分布与高倍清晰渲染
 - `src/domain/generator.ts`：可复现植物分布生成
-- `src/domain/geometry.ts`：边界、重叠、五点法、等距吸附
+- `src/domain/geometry.ts`：边界、重叠、五点法和等距吸附
 - `src/domain/calculator.ts`：样方统计、平均密度和真实值对比
 - `src/data.ts`：场景和植物元数据
-- `src/types.ts`：领域类型定义
-- `src/style.css`：自然科普仪表盘视觉样式
-- `src-tauri/tauri.conf.json`：窗口、应用标识、NSIS 和图标配置
-- `src-tauri/icons/`：应用图标资源
-
-## 设计稿
-
-Figma 文件：<https://www.figma.com/design/odaoPG7CBlMczeIAKrDGUk>
-
-已写入的设计内容：
-
-- `00 设计规范 · 样方实验`
-- `01 草原 · 自由取样`
-- `02 草原 · 五点取样`
-
-绿化带设计依据同一套视觉规范完成了代码实现。Figma Starter 计划在继续写入绿化带画板前达到 MCP 调用额度上限，因此不要重复尝试 Figma 写入；如需补充，可在额度恢复后继续使用该文件。
-
-## 图标资源
-
-主图形为“样方方框 + 四角取样点 + 中央双叶植物”，扁平矢量、透明背景、无文字和渐变。
-
-已生成：
-
-- `src-tauri/icons/icon.ico`
-- `src-tauri/icons/32x32.png`
-- `src-tauri/icons/64x64.png`
-- `src-tauri/icons/128x128.png`
-- `src-tauri/icons/128x128@2x.png`
-- `src-tauri/icons/icon.png`
-- `src-tauri/icons/app-icon.svg`
-
-图标由以下命令生成：
-
-```bash
-pnpm tauri icon src-tauri/icons/app-icon.svg
-```
-
-命令同时生成了 Tauri 支持的其他平台资源，均位于 `src-tauri/icons/`。
+- `src/types.ts`：领域类型定义，包含画布工具类型
+- `src/style.css`：四栏桌面布局和视觉样式
+- `tests/app.spec.ts`：场景切换、框选、缩放、平移和工具栏 E2E 测试
+- `design-qa.md`：确认稿对照和最终视觉验收记录
 
 ## 验证状态
 
-最后一次验证结果：
+- `pnpm run build`：通过。
+- `pnpm exec vitest run --testTimeout 15000`：通过，11/11。
+- `pnpm exec playwright test`：通过，6/6。
+- `pnpm exec vue-tsc -b`：通过。
+- 浏览器视口：`1646 × 912` 主验收、`1280 × 800` 窄桌面复核。
+- 浏览器控制台：最终检查无 error 或 warning。
+- 已验证：草原/绿化带切换、固定 1m² 框选、内部高亮、密度标签、200% 缩放、拖动画布、辅助线、撤销、清空和绿化带铺满。
+- 设计验收：`design-qa.md` 的 `final result` 为 `passed`。
+- Tauri 安装包：本轮未重新打包；上一版本安装包仍位于 `src-tauri/target/release/bundle/nsis/`。
 
-- `pnpm test`：通过，11 个测试全部通过
-- `pnpm test:e2e`：通过，3 个测试全部通过
-- `pnpm build`：通过
-- `pnpm tauri build`：上一版本通过；本轮未重新打包安装程序
-- 浏览器视觉检查：草原无网格和刻度，植物清晰可区分；绿化带样方实测宽高均为 `56.8`，内部高亮和密度角标正常
-- 浏览器控制台：无 warning 或 error
-- 手动流程：草原/绿化带切换、两场景放置样方、密度显示均已验证
-
-## 已生成安装包
-
-```text
-C:\Users\张晓晖\Desktop\work\code\quadrat-lab\src-tauri\target\release\bundle\nsis\样方实验_0.1.0_x64-setup.exe
-```
-
-## 下一次会话启动方式
-
-在项目目录执行：
+## 运行方式
 
 ```bash
 pnpm install
@@ -145,8 +103,8 @@ pnpm dev
 运行测试：
 
 ```bash
-pnpm test
-pnpm test:e2e
+pnpm exec vitest run --testTimeout 15000
+pnpm exec playwright test
 ```
 
 重新打包 Windows NSIS：
@@ -155,7 +113,12 @@ pnpm test:e2e
 pnpm tauri build
 ```
 
-如果新终端找不到 Rust 或 MSVC 环境，使用 Visual Studio 2022 Build Tools 的 x64 Developer Command Prompt，再执行 `pnpm tauri build`。当前机器已安装 Rust stable、Visual Studio C++ Build Tools 和 WebView2。
+## Git 交接
+
+- 当前分支：`main`
+- 远程：`origin` → `https://github.com/zxhnp/quadrat-lab.git`
+- 本轮实现、测试和 `docs/session-handoff.md` 已整理在同一次提交中并推送到 `origin/main`。
+- `.idea/` 下的现有用户文件随工作区保留，未做清理或重置。
 
 ## 暂不实现
 

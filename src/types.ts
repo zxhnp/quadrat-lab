@@ -9,6 +9,8 @@ export type PlantKind =
 
 export type SamplingMode = "free" | "fivePoint" | "equidistant";
 
+export type CanvasTool = "cursor" | "select" | "pan";
+
 export interface Plant {
   id: string;
   kind: PlantKind;

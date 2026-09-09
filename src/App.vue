@@ -5,14 +5,11 @@ import {
   ArrowRight,
   CircleCheck,
   Connection,
-  Delete,
   Grid,
   Histogram,
   InfoFilled,
   Location,
   Operation,
-  Plus,
-  Refresh,
   View,
   WarningFilled,
 } from "@element-plus/icons-vue";
@@ -20,6 +17,7 @@ import { ElMessage } from "element-plus";
 import headerTexture from "./assets/header-botanical-texture.png";
 import AppLogo from "./components/AppLogo.vue";
 import PlantSpecimen from "./components/PlantSpecimen.vue";
+import SamplingToolbar from "./components/SamplingToolbar.vue";
 import SceneCanvas from "./components/SceneCanvas.vue";
 import { plantMeta, sceneMeta } from "./data";
 import { actualCounts, compareWithActual, summarizeQuadrats } from "./domain/calculator";
@@ -33,7 +31,7 @@ import {
   snappedEquidistantQuadrat,
 } from "./domain/geometry";
 import { generateScene } from "./domain/generator";
-import type { ComparisonResult, PlantKind, Point, Quadrat, SamplingMode, SceneDefinition, SceneKind, SamplingSummary } from "./types";
+import type { CanvasTool, ComparisonResult, PlantKind, Point, Quadrat, SamplingMode, SceneDefinition, SceneKind, SamplingSummary } from "./types";
 
 const sceneKind = ref<SceneKind>("grassland");
 const scene = ref<SceneDefinition>(generateScene(sceneKind.value));
@@ -46,6 +44,8 @@ const revealed = ref(false);
 const spacing = ref<number | null>(null);
 const history = ref<Quadrat[][]>([]);
 const activeMode = ref<SamplingMode>("free");
+const activeCanvasTool = ref<CanvasTool>("select");
+const sceneCanvasRef = ref<InstanceType<typeof SceneCanvas> | null>(null);
 const errorMessage = ref("");
 
 const meta = computed(() => sceneMeta[sceneKind.value]);
@@ -87,6 +87,7 @@ function resetSession(kind: SceneKind = sceneKind.value, nextSeed = Date.now()):
   spacing.value = null;
   history.value = [];
   activeMode.value = kind === "grassland" ? "free" : "equidistant";
+  activeCanvasTool.value = "select";
   errorMessage.value = "";
 }
 
@@ -97,8 +98,31 @@ function chooseScene(kind: SceneKind): void {
 
 function startSampling(): void {
   activeMode.value = sceneKind.value === "grassland" ? "free" : "equidistant";
+  activeCanvasTool.value = "select";
   errorMessage.value = "";
-  ElMessage({ message: sceneKind.value === "grassland" ? "请在草原中点击选择中心样方" : "请在绿化带中点击第一个样方", type: "success" });
+  ElMessage({ message: sceneKind.value === "grassland" ? "请在草原中拖动框选 1m × 1m 中心样方" : "请在绿化带中拖动框选第一个 1m × 1m 样方", type: "success" });
+}
+
+function setCanvasTool(tool: CanvasTool): void {
+  activeCanvasTool.value = tool;
+  errorMessage.value = "";
+}
+
+function zoomIn(): void {
+  sceneCanvasRef.value?.zoomIn();
+}
+
+function zoomOut(): void {
+  sceneCanvasRef.value?.zoomOut();
+}
+
+function resetZoom(): void {
+  sceneCanvasRef.value?.resetZoom();
+}
+
+function handleGuideTool(): void {
+  if (sceneKind.value === "greenbelt") fillGreenbelt();
+  else toggleGuide();
 }
 
 function createQuadrat(point: Point, source?: Quadrat): Quadrat {
@@ -305,49 +329,43 @@ function showFivePointReference(): Quadrat[] {
 
       <main class="workspace">
         <aside class="specimen-rail" aria-label="实验设置与植物图例">
-          <div class="rail-title-row"><div><span class="eyebrow">目标植物</span><h2>样地与标本</h2></div><el-icon class="rail-icon"><Aim /></el-icon></div>
+          <h2 class="panel-title">场景选择</h2>
 
           <section class="scene-switcher" aria-label="实验场景">
-            <button class="scene-tab" :class="{ active: sceneKind === 'grassland' }" type="button" @click="chooseScene('grassland')"><span>草原</span><small>50m × 50m</small></button>
-            <button class="scene-tab" :class="{ active: sceneKind === 'greenbelt' }" type="button" @click="chooseScene('greenbelt')"><span>绿化带</span><small>20m × 2m</small></button>
+            <button class="scene-tab" :class="{ active: sceneKind === 'grassland' }" type="button" @click="chooseScene('grassland')"><PlantSpecimen kind="groundcover" compact /><span>草原</span><small>50m × 50m</small></button>
+            <button class="scene-tab" :class="{ active: sceneKind === 'greenbelt' }" type="button" @click="chooseScene('greenbelt')"><PlantSpecimen kind="iris" compact /><span>绿化带</span><small>20m × 2m</small></button>
           </section>
 
-          <section class="scene-summary"><span class="summary-kicker">当前场景</span><strong>{{ meta.label }} · {{ meta.samplingLabel }}</strong><span>{{ meta.subtitle }}</span></section>
-
           <section class="specimen-section">
-            <div class="section-label-row"><span>植物标本</span><span class="section-note">按形态识别</span></div>
+            <div class="section-label-row"><span>植物标本</span></div>
             <div class="specimen-list">
               <article v-for="kind in specimenKinds" :key="kind" class="specimen-card" :class="{ target: kind === meta.targetPlant }">
-                <div class="specimen-card-header"><div><strong>{{ plantMeta[kind].label }}</strong><el-tag v-if="kind === meta.targetPlant" size="small" type="warning" effect="plain">目标</el-tag></div><span>{{ plantMeta[kind].icon }}</span></div>
-                <PlantSpecimen :kind="kind" />
-                <p>{{ plantMeta[kind].typeLabel }}</p>
+                <PlantSpecimen :kind="kind" compact />
+                <div class="specimen-copy"><div class="specimen-card-header"><strong>{{ plantMeta[kind].label }}</strong><el-tag v-if="kind === meta.targetPlant" size="small" type="warning" effect="plain">目标</el-tag></div><p>{{ plantMeta[kind].typeLabel }}</p></div>
               </article>
             </div>
           </section>
-
-          <section class="tool-section">
-            <div class="section-label-row"><span>取样工具</span><el-tag size="small" effect="plain">{{ quadrats.length }} 个样方</el-tag></div>
-            <div class="tool-stack">
-              <el-button class="tool-button primary-tool" type="primary" :icon="Plus" @click="startSampling">选择样方</el-button>
-              <el-button class="tool-button" :class="{ 'is-on': guideVisible }" :icon="Connection" @click="toggleGuide">{{ guideVisible ? '关闭 X 型辅助线' : '显示 X 型辅助线' }}</el-button>
-              <el-button v-if="sceneKind === 'greenbelt'" class="tool-button" :disabled="quadrats.length < 2" :icon="Grid" @click="fillGreenbelt">标准铺满绿化带</el-button>
-              <div class="tool-row"><el-button class="mini-tool" :disabled="!history.length" :icon="Refresh" @click="undo">撤销</el-button><el-button class="mini-tool" :disabled="!quadrats.length" :icon="Delete" @click="clearQuadrats">清空</el-button></div>
-              <el-button class="tool-button muted-tool" :icon="Refresh" @click="regenerate">重新生成植物</el-button>
-            </div>
-          </section>
-
-          <div class="rail-tip"><el-icon><InfoFilled /></el-icon><span>{{ sceneKind === 'grassland' ? '先选中心样方，再显示 X 型辅助线。' : '先选两个样方，程序会自动锁定等距间隔。' }}</span></div>
         </aside>
 
-        <section class="map-panel" aria-label="交互画布">
-          <div class="map-header">
-            <div><div class="map-eyebrow"><span class="live-dot" />实验场景 · {{ stepLabel }}</div><div class="map-title-row"><h2>{{ meta.label }}</h2><el-tag type="success" effect="light" round>{{ meta.samplingLabel }}</el-tag><span class="map-size">{{ meta.dimensions }} · {{ scene.area.toLocaleString('zh-CN') }}m²</span></div><p>{{ meta.intro }}</p></div>
-            <div class="map-header-note"><span>当前模式</span><strong>{{ sceneKind === 'grassland' ? '自由取样' : '水平等距' }}</strong></div>
-          </div>
+        <SamplingToolbar
+          :active-tool="activeCanvasTool"
+          :guide-visible="guideVisible"
+          :guide-label="sceneKind === 'grassland' ? '辅助线' : '等距铺满'"
+          :can-guide="sceneKind === 'grassland' ? quadrats.length > 0 : quadrats.length >= 2"
+          :can-undo="history.length > 0"
+          :can-clear="quadrats.length > 0"
+          @tool-change="setCanvasTool"
+          @toggle-guide="handleGuideTool"
+          @zoom-in="zoomIn"
+          @zoom-out="zoomOut"
+          @reset-zoom="resetZoom"
+          @undo="undo"
+          @clear="clearQuadrats"
+        />
 
-          <SceneCanvas :scene="scene" :quadrats="quadrats" :selected-quadrat-id="selectedQuadratId" :guide-visible="guideVisible" :counted="counted" @canvas-click="handleCanvasClick" @select-quadrat="selectQuadrat" />
+        <section class="map-panel" aria-label="交互画布">
+          <SceneCanvas ref="sceneCanvasRef" :scene="scene" :quadrats="quadrats" :selected-quadrat-id="selectedQuadratId" :guide-visible="guideVisible" :counted="counted" :active-tool="activeCanvasTool" @canvas-click="handleCanvasClick" @select-quadrat="selectQuadrat" />
           <el-alert v-if="errorMessage" class="canvas-alert" :title="errorMessage" type="warning" :closable="false" show-icon><template #icon><el-icon><WarningFilled /></el-icon></template></el-alert>
-          <div v-else class="canvas-instruction"><el-icon><Aim /></el-icon><span>{{ sceneKind === 'grassland' ? '在草原中点击位置放置中心样方；打开 X 型辅助线后，可继续吸附四角样方。' : '在绿化带中点击两个位置确定间距，后续样方会沿绿化带长度方向自动等距。' }}</span></div>
         </section>
 
         <aside class="inspector-rail" aria-label="样方统计与估算">
@@ -365,8 +383,6 @@ function showFivePointReference(): Quadrat[] {
           <div v-if="revealed" class="comparison-card"><div class="comparison-title"><span>真实值对比</span><el-tag size="small" type="warning">误差 {{ comparison.errorPercent.toFixed(1) }}%</el-tag></div><div class="comparison-line"><span>实际密度</span><strong>{{ comparison.actualDensity.toFixed(2) }} 株/m²</strong></div><div class="comparison-line"><span>样方法估算</span><strong>{{ comparison.estimatedDensity.toFixed(2) }} 株/m²</strong></div><div class="actual-counts"><div v-for="kind in specimenKinds" :key="kind"><span>{{ plantMeta[kind].label }}</span><b>{{ formatNumber(actualCountMap[kind]) }} 株</b></div></div></div>
         </aside>
       </main>
-
-      <footer class="bottom-status"><div class="status-brand"><el-icon><Operation /></el-icon><div><span>实验进度</span><strong>{{ stepLabel }}</strong></div></div><div class="status-metric"><span>已选样方</span><strong>{{ quadrats.length }}<small>个</small></strong></div><div class="status-divider" /><div class="status-metric"><span>平均密度</span><strong>{{ averageReady ? comparison.estimatedDensity.toFixed(2) : '—' }}<small>株/m²</small></strong></div><div class="status-divider" /><div class="status-note"><span>边界规则</span><strong>计上不计下 · 计左不计右</strong></div><div class="status-spacer" /><el-button class="footer-secondary" :disabled="!quadrats.length" @click="clearQuadrats">清空样方</el-button><el-button class="footer-primary" type="success" :disabled="!averageReady" :icon="View" @click="revealActual">揭晓真实结果</el-button></footer>
     </div>
   </el-config-provider>
 </template>
