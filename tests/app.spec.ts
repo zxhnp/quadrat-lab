@@ -14,11 +14,38 @@ async function dragSample(page: Page, canvas: Locator, xRatio: number, yRatio: n
 test("样方实验主流程可加载并切换场景", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "样方实验" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /选取样方.*1m² × 1m²/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /草原 50m × 50m/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /选取样方.*1m × 1m/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /草地 50m × 50m/ })).toBeVisible();
   await page.getByRole("button", { name: /绿化带 20m × 2m/ }).click();
   await expect(page.getByAltText("绿化带场景底图")).toBeVisible();
   await expect(page.getByRole("button", { name: "等距铺满" })).toBeDisabled();
+  const toolbar = page.getByRole("complementary", { name: "取样工具栏" });
+  await expect(toolbar.getByRole("button", { name: "拖动画布" })).toHaveCount(0);
+  await expect(toolbar.getByRole("button", { name: "放大", exact: true })).toHaveCount(0);
+  await expect(toolbar.getByRole("button", { name: "缩小", exact: true })).toHaveCount(0);
+  await expect(page.locator(".greenbelt-overlay")).not.toContainText(/乔木带|道路|等距 3m/);
+});
+
+test("重叠样方只显示一次顶部消息", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "进入取样模式" }).click();
+  const viewport = page.locator(".scene-viewport");
+  await dragSample(page, viewport, .5, .5, 16);
+  await expect(page.locator(".sample-row")).toHaveCount(1);
+
+  const firstQuadratBounds = await page.locator(".quadrats .quadrat rect").first().boundingBox();
+  if (!firstQuadratBounds) throw new Error("未找到第一个样方");
+  const overlapStart = {
+    x: firstQuadratBounds.x + firstQuadratBounds.width / 2,
+    y: firstQuadratBounds.y + firstQuadratBounds.height + 2,
+  };
+  await page.mouse.move(overlapStart.x, overlapStart.y);
+  await page.mouse.down();
+  await page.mouse.move(overlapStart.x, overlapStart.y - 16, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.locator(".sample-row")).toHaveCount(1);
+  await expect(page.locator(".canvas-alert")).toHaveCount(0);
+  await expect(page.locator(".el-message").filter({ hasText: "样方与已有样方重叠，请选择其他位置" })).toHaveCount(1);
 });
 
 test("绿化带可通过两个样方建立等距并铺满", async ({ page }) => {
@@ -28,6 +55,31 @@ test("绿化带可通过两个样方建立等距并铺满", async ({ page }) => 
 
   const canvas = page.locator("svg.scene-canvas");
   await dragSample(page, canvas, 0.20, 0.60);
+  const firstQuadrat = page.locator(".quadrats .quadrat rect").first();
+  await expect.poll(async () => {
+    const bounds = await firstQuadrat.boundingBox();
+    return bounds ? Math.abs(bounds.width - bounds.height) : Number.POSITIVE_INFINITY;
+  }).toBeLessThan(.5);
+  const firstQuadratBounds = await firstQuadrat.boundingBox();
+  const canvasBounds = await canvas.boundingBox();
+  if (!firstQuadratBounds || !canvasBounds) throw new Error("未找到绿化带样方或画布尺寸");
+  expect(firstQuadratBounds.width).toBeCloseTo(firstQuadratBounds.height, 0);
+  const quadratCenterY = firstQuadratBounds.y + firstQuadratBounds.height / 2;
+  const plantingBandCenterY = canvasBounds.y + canvasBounds.height * (355 / 700);
+  expect(quadratCenterY).toBeCloseTo(plantingBandCenterY, 0);
+  await expect(page.locator(".quadrat-count-label").first()).toHaveText(/^\d+株$/);
+  const firstSampleCount = Number.parseInt((await page.locator(".sample-row strong").first().textContent()) ?? "", 10);
+  await expect(page.getByTestId("selected-target-marker")).toHaveCount(firstSampleCount);
+  const markerCenters = await page.locator(".selected-target-markers circle").evaluateAll((circles) => circles.map((circle) => {
+    const bounds = circle.getBoundingClientRect();
+    return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+  }));
+  for (const center of markerCenters) {
+    expect(center.x).toBeGreaterThanOrEqual(firstQuadratBounds.x);
+    expect(center.x).toBeLessThanOrEqual(firstQuadratBounds.x + firstQuadratBounds.width);
+    expect(center.y).toBeGreaterThanOrEqual(firstQuadratBounds.y);
+    expect(center.y).toBeLessThanOrEqual(firstQuadratBounds.y + firstQuadratBounds.height);
+  }
   await dragSample(page, canvas, 0.275, 0.60);
 
   await expect(page.locator(".sample-row")).toHaveCount(2);
@@ -52,19 +104,57 @@ test("绿化带可通过两个样方建立等距并铺满", async ({ page }) => 
   await expect(page.getByRole("button", { name: "揭晓真实结果" })).toBeVisible();
 });
 
-test("草原在四倍缩放下可框选真实一米样方", async ({ page }) => {
+test("草地辅助线以开启时选中的样方为中心，后续选取时不会跳动", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "进入取样模式" }).click();
-  await expect(page.getByRole("button", { name: "重置草原缩放" })).toHaveText("400%");
+  const viewport = page.locator(".scene-viewport");
+  await dragSample(page, viewport, .35, .35, 20);
+  await dragSample(page, viewport, .65, .65, 20);
+  await expect(page.locator(".sample-row")).toHaveCount(2);
+  await page.locator(".sample-row").nth(1).click();
+  await page.getByRole("button", { name: "辅助线" }).click();
+  const guides = page.locator(".five-point-guide rect");
+  const selectedBounds = await page.locator(".quadrats .quadrat.selected rect").boundingBox();
+  const guideCenterBounds = await page.locator(".five-point-guide rect.guide-center").boundingBox();
+  if (!selectedBounds || !guideCenterBounds) throw new Error("未找到当前样方或辅助线中心样方");
+  expect(guideCenterBounds.x + guideCenterBounds.width / 2).toBeCloseTo(selectedBounds.x + selectedBounds.width / 2, 1);
+  expect(guideCenterBounds.y + guideCenterBounds.height / 2).toBeCloseTo(selectedBounds.y + selectedBounds.height / 2, 1);
+  const guideGeometryBefore = await guides.evaluateAll((elements) => elements.map((element) => ({
+    x: Number(element.getAttribute("x")),
+    y: Number(element.getAttribute("y")),
+  })));
+
+  await dragSample(page, viewport, .5, .8, 20);
+  await expect(page.locator(".sample-row")).toHaveCount(3);
+  await expect(page.locator(".sample-row").nth(2)).toHaveClass(/active/);
+  const guideGeometryAfterAdding = await guides.evaluateAll((elements) => elements.map((element) => ({
+    x: Number(element.getAttribute("x")),
+    y: Number(element.getAttribute("y")),
+  })));
+  expect(guideGeometryAfterAdding).toEqual(guideGeometryBefore);
+
+  await page.locator(".sample-row").first().click();
+  const guideGeometryAfterSelecting = await guides.evaluateAll((elements) => elements.map((element) => ({
+    x: Number(element.getAttribute("x")),
+    y: Number(element.getAttribute("y")),
+  })));
+  expect(guideGeometryAfterSelecting).toEqual(guideGeometryBefore);
+});
+
+test("草地在四倍缩放下可框选真实一米样方", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "进入取样模式" }).click();
+  await expect(page.getByRole("button", { name: "重置草地缩放" })).toHaveText("400%");
   const distributionLayer = page.locator("canvas.distribution-layer");
   await expect(distributionLayer).toBeVisible();
   await expect(distributionLayer).toHaveAttribute("data-rendered-target-count", "11250");
   await expect(distributionLayer).toHaveAttribute("data-plant-symbol-screen-scale", "2.4");
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   const distributionBeforeSelection = await distributionLayer.evaluate((element) => element.toDataURL());
 
   const viewport = page.locator(".scene-viewport");
   const box = await viewport.boundingBox();
-  if (!box) throw new Error("未找到草原交互画布尺寸");
+  if (!box) throw new Error("未找到草地交互画布尺寸");
   await page.mouse.click(box.x + 100, box.y + 100);
   await expect(page.locator(".sample-row")).toHaveCount(0);
 
@@ -98,8 +188,8 @@ test("草原在四倍缩放下可框选真实一米样方", async ({ page }) => 
   expect(densityTextBounds.height).toBeGreaterThan(18);
   await expect(densityText).toHaveText(/^\d+(?:\.\d+)?株\/㎡$/);
 
-  await page.getByRole("button", { name: "重置草原缩放" }).click();
-  await expect(page.getByRole("button", { name: "重置草原缩放" })).toHaveText("100%");
+  await page.getByRole("button", { name: "重置草地缩放" }).click();
+  await expect(page.getByRole("button", { name: "重置草地缩放" })).toHaveText("100%");
   const quadratAtOverview = await quadrat.boundingBox();
   const textAtOverview = await densityText.boundingBox();
   if (!quadratAtOverview || !textAtOverview) throw new Error("未找到 100% 下的密度标注尺寸");
@@ -111,15 +201,15 @@ test("草原在四倍缩放下可框选真实一米样方", async ({ page }) => 
   expect(textAtOverview.height).toBeGreaterThan(13);
 
   await page.getByRole("button", { name: "进入取样模式" }).click();
-  await expect(page.getByRole("button", { name: "重置草原缩放" })).toHaveText("400%");
+  await expect(page.getByRole("button", { name: "重置草地缩放" })).toHaveText("400%");
   const markedCount = Number(await page.locator(".sample-focus strong").first().textContent());
   expect(markedCount).toBeGreaterThanOrEqual(0);
   await expect(page.getByTestId("selected-target-marker")).toHaveCount(markedCount);
   expect(await distributionLayer.evaluate((element) => element.toDataURL())).toBe(distributionBeforeSelection);
 
   const fontSizeAtSamplingZoom = await densityText.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
-  await page.getByRole("button", { name: "放大草原" }).click();
-  await expect(page.getByRole("button", { name: "重置草原缩放" })).toHaveText("600%");
+  await page.getByRole("button", { name: "放大草地" }).click();
+  await expect(page.getByRole("button", { name: "重置草地缩放" })).toHaveText("600%");
   const fontSizeAboveSamplingZoom = await densityText.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
   expect(fontSizeAtSamplingZoom * 4).toBeCloseTo(14, 5);
   expect(fontSizeAboveSamplingZoom * 6).toBeCloseTo(14, 2);
@@ -143,7 +233,7 @@ test("草原在四倍缩放下可框选真实一米样方", async ({ page }) => 
   await expect(page.locator(".canvas-caption")).toContainText("中心距 2m 的 X 辅助线");
 });
 
-test("草原五点样方的左侧两个密度标签在各比例下保持左置", async ({ page }) => {
+test("草地五点样方的左侧两个密度标签在各比例下保持左置", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "进入取样模式" }).click();
   const viewport = page.locator(".scene-viewport");
@@ -168,9 +258,9 @@ test("草原五点样方的左侧两个密度标签在各比例下保持左置",
   }
 
   await expectLeftLabelsAtCurrentZoom();
-  await page.getByRole("button", { name: "重置草原缩放" }).click();
+  await page.getByRole("button", { name: "重置草地缩放" }).click();
   await expectLeftLabelsAtCurrentZoom();
-  await page.getByRole("button", { name: "放大草原" }).click();
+  await page.getByRole("button", { name: "放大草地" }).click();
   await expectLeftLabelsAtCurrentZoom();
 });
 
@@ -241,7 +331,7 @@ test("切换场景后动态植物层会更新分布", async ({ page }) => {
   expect(after).not.toBe(before);
 
   await expect(page.getByAltText("绿化带场景底图")).toBeVisible();
-  await expect(layer).toHaveAttribute("data-rendered-plant-count", "298");
+  await expect(layer).toHaveAttribute("data-rendered-plant-count", "430");
 });
 
 test("场景选择使用简洁文字卡片，工具栏重置会恢复视图并生成新分布", async ({ page }) => {
@@ -254,10 +344,10 @@ test("场景选择使用简洁文字卡片，工具栏重置会恢复视图并�
   await page.waitForTimeout(300);
   const grasslandBefore = await layer.evaluate((canvas) => canvas.toDataURL());
   await page.getByRole("button", { name: "放大", exact: true }).click();
-  await expect(page.getByRole("button", { name: "重置草原缩放" })).toHaveText("200%");
+  await expect(page.getByRole("button", { name: "重置草地缩放" })).toHaveText("200%");
   await page.getByRole("button", { name: "重置", exact: true }).click();
-  await expect(page.getByRole("button", { name: "重置草原缩放" })).toHaveText("100%");
-  await expect(page.getByText("已重置并生成新的草原植物分布").last()).toBeVisible();
+  await expect(page.getByRole("button", { name: "重置草地缩放" })).toHaveText("100%");
+  await expect(page.getByText("已重置并生成新的草地植物分布").last()).toBeVisible();
   await expect.poll(() => layer.evaluate((canvas) => canvas.toDataURL())).not.toBe(grasslandBefore);
 
   await page.getByRole("button", { name: /绿化带 20m × 2m/ }).click();
@@ -270,13 +360,13 @@ test("场景选择使用简洁文字卡片，工具栏重置会恢复视图并�
 
 test("放大后可切换拖动画布工具进行平移", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "放大草原" }).click();
-  await page.getByRole("button", { name: "放大草原" }).click();
+  await page.getByRole("button", { name: "放大草地" }).click();
+  await page.getByRole("button", { name: "放大草地" }).click();
   await page.getByRole("button", { name: "拖动画布" }).click();
 
   const viewport = page.locator(".scene-viewport");
   const box = await viewport.boundingBox();
-  if (!box) throw new Error("未找到草原交互画布尺寸");
+  if (!box) throw new Error("未找到草地交互画布尺寸");
   const before = await viewport.evaluate((element) => ({ left: element.scrollLeft, top: element.scrollTop }));
   await page.mouse.move(box.x + box.width * .5, box.y + box.height * .5);
   await page.mouse.down();

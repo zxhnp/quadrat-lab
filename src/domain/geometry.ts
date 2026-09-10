@@ -16,11 +16,14 @@ export function clamp(value: number, min: number, max: number): number {
 
 export function normalizeQuadrat(point: Point, scene: SceneDefinition): Quadrat {
   const size = quadratSizeForScene(scene);
+  const y = scene.kind === "greenbelt"
+    ? (scene.heightMeters - size) / 2
+    : clamp(point.y - size / 2, 0, scene.heightMeters - size);
   return {
     id: "pending",
     index: 0,
     x: clamp(point.x - size / 2, 0, scene.widthMeters - size),
-    y: clamp(point.y - size / 2, 0, scene.heightMeters - size),
+    y,
     size,
   };
 }

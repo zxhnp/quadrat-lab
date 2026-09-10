@@ -9,7 +9,7 @@ function signature(scene: ReturnType<typeof generateScene>, kind: "artemisia" | 
 }
 
 describe("植物分布生成器", () => {
-  it("草原的茵陈蒿、狗尾巴草和小草都会随种子变化", () => {
+  it("草地的茵陈蒿、狗尾巴草和小草都会随种子变化", () => {
     const first = generateScene("grassland", 101);
     const second = generateScene("grassland", 202);
 
@@ -27,18 +27,25 @@ describe("植物分布生成器", () => {
     }
   });
 
-  it("绿化带鸢尾花按上中下三行横向铺满", () => {
+  it("绿化带鸢尾花按五行横向铺满", () => {
     const irises = generateScene("greenbelt", 303).plants.filter((plant) => plant.kind === "iris");
-    const rows = [0, 1, 2].map((row) => irises.filter((plant) => plant.id.startsWith(`iris-${row}-`)));
+    const rows = [0, 1, 2, 3, 4].map((row) => irises.filter((plant) => plant.id.startsWith(`iris-${row}-`)));
 
-    expect(irises).toHaveLength(48);
-    expect(rows.every((row) => row.length === 16)).toBe(true);
+    expect(irises).toHaveLength(150);
+    expect(rows.every((row) => row.length === 30)).toBe(true);
     expect(Math.min(...irises.map((plant) => plant.x))).toBeLessThan(1.2);
     expect(Math.max(...irises.map((plant) => plant.x))).toBeGreaterThan(18.8);
-    expect(Math.max(...rows[0]!.map((plant) => plant.y))).toBeLessThan(.5);
-    expect(Math.min(...rows[1]!.map((plant) => plant.y))).toBeGreaterThan(.9);
-    expect(Math.max(...rows[1]!.map((plant) => plant.y))).toBeLessThan(1.1);
-    expect(Math.min(...rows[2]!.map((plant) => plant.y))).toBeGreaterThan(1.5);
+    expect(Math.max(...rows[0]!.map((plant) => plant.y))).toBeLessThan(.3);
+    expect(Math.min(...rows[2]!.map((plant) => plant.y))).toBeGreaterThan(.9);
+    expect(Math.max(...rows[2]!.map((plant) => plant.y))).toBeLessThan(1.1);
+    expect(Math.min(...rows[4]!.map((plant) => plant.y))).toBeGreaterThan(1.7);
+  });
+
+  it("绿化带三类植物数量与展示设置一致", () => {
+    const greenbelt = generateScene("greenbelt", 606);
+    expect(greenbelt.plants.filter((plant) => plant.kind === "dandelion")).toHaveLength(200);
+    expect(greenbelt.plants.filter((plant) => plant.kind === "foxtail")).toHaveLength(80);
+    expect(greenbelt.plants.filter((plant) => plant.kind === "iris")).toHaveLength(150);
   });
 
   it("两个场景保持各自的总体密度，但局部样方自然波动", () => {

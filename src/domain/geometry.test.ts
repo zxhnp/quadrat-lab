@@ -45,13 +45,14 @@ describe("样方几何规则", () => {
     expect(snappedEquidistantQuadrat({ x: 19.5, y: 1 }, first, 8.9, belt)).toBeNull();
   });
 
-  it("草原和绿化带都使用真实的一米样方", () => {
+  it("草地和绿化带都使用真实的一米样方", () => {
     const grasslandQuadrat = normalizeQuadrat({ x: 25, y: 25 }, scene);
-    const greenbeltQuadrat = normalizeQuadrat({ x: 10, y: 1 }, generateScene("greenbelt", 5678));
+    const greenbeltQuadrat = normalizeQuadrat({ x: 10, y: .2 }, generateScene("greenbelt", 5678));
 
     expect(grasslandQuadrat.size).toBe(1);
     expect(grasslandQuadrat.x).toBe(24.5);
     expect(grasslandQuadrat.y).toBe(24.5);
     expect(greenbeltQuadrat.size).toBe(1);
+    expect(greenbeltQuadrat.y).toBe(.5);
   });
 });

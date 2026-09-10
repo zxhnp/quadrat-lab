@@ -11,7 +11,6 @@ import {
   Location,
   Operation,
   View,
-  WarningFilled,
 } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import headerTexture from "./assets/header-botanical-texture.png";
@@ -23,7 +22,6 @@ import { plantMeta, sceneMeta } from "./data";
 import { actualCounts, compareWithActual, summarizeQuadrats } from "./domain/calculator";
 import {
   clamp,
-  fivePointQuadrats,
   hasOverlap,
   nearestGuideQuadrat,
   normalizeQuadrat,
@@ -39,6 +37,7 @@ const quadrats = ref<Quadrat[]>([]);
 const selectedQuadratId = ref<string | null>(null);
 const selectedQuadratIds = ref<string[]>([]);
 const guideVisible = ref(false);
+const guideAnchorQuadratId = ref<string | null>(null);
 const averageReady = ref(false);
 const revealed = ref(false);
 const spacing = ref<number | null>(null);
@@ -46,13 +45,13 @@ const history = ref<Quadrat[][]>([]);
 const activeMode = ref<SamplingMode>("free");
 const activeCanvasTool = ref<CanvasTool>("select");
 const sceneCanvasRef = ref<InstanceType<typeof SceneCanvas> | null>(null);
-const errorMessage = ref("");
 
 const meta = computed(() => sceneMeta[sceneKind.value]);
 const summaries = computed<SamplingSummary[]>(() => summarizeQuadrats(scene.value, quadrats.value));
 const comparison = computed<ComparisonResult>(() => compareWithActual(scene.value, summaries.value));
 const selectedSummary = computed(() => summaries.value.find((item) => item.quadratId === selectedQuadratId.value) ?? null);
 const selectedQuadratIdSet = computed(() => new Set(selectedQuadratIds.value));
+const guideAnchorQuadrat = computed(() => quadrats.value.find((item) => item.id === guideAnchorQuadratId.value) ?? null);
 const actualCountMap = computed(() => actualCounts(scene.value));
 const specimenKinds = computed<PlantKind[]>(() => sceneKind.value === "grassland" ? ["artemisia", "foxtail", "groundcover"] : ["dandelion", "iris", "foxtail"]);
 const canAverage = computed(() => summaries.value.length > 0);
@@ -87,13 +86,13 @@ function resetSession(kind: SceneKind = sceneKind.value, nextSeed = nextSceneSee
   selectedQuadratId.value = null;
   selectedQuadratIds.value = [];
   guideVisible.value = false;
+  guideAnchorQuadratId.value = null;
   averageReady.value = false;
   revealed.value = false;
   spacing.value = null;
   history.value = [];
   activeMode.value = kind === "grassland" ? "free" : "equidistant";
   activeCanvasTool.value = "select";
-  errorMessage.value = "";
 }
 
 function chooseScene(kind: SceneKind): void {
@@ -104,14 +103,12 @@ function chooseScene(kind: SceneKind): void {
 function startSampling(): void {
   activeMode.value = sceneKind.value === "grassland" ? "free" : "equidistant";
   activeCanvasTool.value = "select";
-  errorMessage.value = "";
   if (sceneKind.value === "grassland") sceneCanvasRef.value?.focusSamplingZoom();
   ElMessage({ message: sceneKind.value === "grassland" ? "已放大到 400%，请拖动框选真实 1m × 1m 中心样方" : "请在绿化带中拖动框选第一个 1m × 1m 样方", type: "success" });
 }
 
 function setCanvasTool(tool: CanvasTool): void {
   activeCanvasTool.value = tool;
-  errorMessage.value = "";
 }
 
 function zoomIn(): void {
@@ -138,7 +135,6 @@ function createQuadrat(point: Point, source?: Quadrat): Quadrat {
 }
 
 function setError(message: string): void {
-  errorMessage.value = message;
   ElMessage({ message, type: "warning" });
 }
 
@@ -148,9 +144,8 @@ function pushHistory(): void {
 }
 
 function handleCanvasClick(point: Point): void {
-  errorMessage.value = "";
   if (scene.value.kind === "grassland" && (point.x < 0 || point.x > 50 || point.y < 0 || point.y > 50)) {
-    setError("请在草原样地范围内选择样方");
+    setError("请在草地样地范围内选择样方");
     return;
   }
   if (scene.value.kind === "greenbelt" && (point.x < 0 || point.x > 20 || point.y < 0 || point.y > 2)) {
@@ -160,8 +155,8 @@ function handleCanvasClick(point: Point): void {
 
   const first = quadrats.value[0];
   let candidate: Quadrat;
-  if (scene.value.kind === "grassland" && guideVisible.value && first) {
-    candidate = nearestGuideQuadrat(point, first, scene.value) ?? normalizeQuadrat(point, scene.value);
+  if (scene.value.kind === "grassland" && guideVisible.value && guideAnchorQuadrat.value) {
+    candidate = nearestGuideQuadrat(point, guideAnchorQuadrat.value, scene.value) ?? normalizeQuadrat(point, scene.value);
   } else if (scene.value.kind === "greenbelt" && first && spacing.value) {
     const snapped = snappedEquidistantQuadrat(point, first, spacing.value, scene.value);
     if (!snapped) {
@@ -228,15 +223,23 @@ function handleTableRowClick(row: SamplingSummary): void {
 
 function toggleGuide(): void {
   if (sceneKind.value !== "grassland") {
-    setError("X 型五点辅助线只适用于草原场景");
+    setError("X 型五点辅助线只适用于草地场景");
     return;
   }
   if (!quadrats.value.length) {
     setError("请先选择一个中心样方，再显示 X 型辅助线");
     return;
   }
-  guideVisible.value = !guideVisible.value;
-  activeMode.value = guideVisible.value ? "fivePoint" : "free";
+  if (guideVisible.value) {
+    guideVisible.value = false;
+    guideAnchorQuadratId.value = null;
+    activeMode.value = "free";
+    return;
+  }
+  const anchor = quadrats.value.find((item) => item.id === selectedQuadratId.value) ?? quadrats.value[0];
+  guideAnchorQuadratId.value = anchor?.id ?? null;
+  guideVisible.value = true;
+  activeMode.value = "fivePoint";
 }
 
 function fillGreenbelt(): void {
@@ -285,6 +288,11 @@ function undo(): void {
     return;
   }
   quadrats.value = previous.map((item) => ({ ...item }));
+  if (guideVisible.value && !guideAnchorQuadrat.value) {
+    guideVisible.value = false;
+    guideAnchorQuadratId.value = null;
+    activeMode.value = "free";
+  }
   selectedQuadratId.value = quadrats.value[quadrats.value.length - 1]?.id ?? null;
   selectedQuadratIds.value = selectedQuadratId.value ? [selectedQuadratId.value] : [];
   averageReady.value = false;
@@ -298,6 +306,7 @@ function clearQuadrats(): void {
   selectedQuadratId.value = null;
   selectedQuadratIds.value = [];
   guideVisible.value = false;
+  guideAnchorQuadratId.value = null;
   spacing.value = null;
   averageReady.value = false;
   revealed.value = false;
@@ -309,10 +318,6 @@ function regenerate(): void {
   ElMessage({ message: `已重置并生成新的${sceneMeta[sceneKind.value].label}植物分布`, type: "success" });
 }
 
-function showFivePointReference(): Quadrat[] {
-  const first = quadrats.value[0];
-  return first ? fivePointQuadrats(first, scene.value) : [];
-}
 </script>
 
 <template>
@@ -338,7 +343,7 @@ function showFivePointReference(): Quadrat[] {
           <h2 class="panel-title">场景选择</h2>
 
           <section class="scene-switcher" aria-label="实验场景">
-            <button class="scene-tab" :class="{ active: sceneKind === 'grassland' }" type="button" @click="chooseScene('grassland')"><span>草原</span><small>50m × 50m</small></button>
+            <button class="scene-tab" :class="{ active: sceneKind === 'grassland' }" type="button" @click="chooseScene('grassland')"><span>草地</span><small>50m × 50m</small></button>
             <button class="scene-tab" :class="{ active: sceneKind === 'greenbelt' }" type="button" @click="chooseScene('greenbelt')"><span>绿化带</span><small>20m × 2m</small></button>
           </section>
 
@@ -362,6 +367,7 @@ function showFivePointReference(): Quadrat[] {
           :can-clear="quadrats.length > 0"
           :can-select-all="quadrats.length > 0 && selectedQuadratIds.length < quadrats.length"
           :can-clear-selection="selectedQuadratIds.length > 0"
+          :show-viewport-tools="sceneKind === 'grassland'"
           @tool-change="setCanvasTool"
           @toggle-guide="handleGuideTool"
           @zoom-in="zoomIn"
@@ -374,8 +380,7 @@ function showFivePointReference(): Quadrat[] {
         />
 
         <section class="map-panel" aria-label="交互画布">
-          <SceneCanvas ref="sceneCanvasRef" :scene="scene" :quadrats="quadrats" :selected-quadrat-id="selectedQuadratId" :selected-quadrat-ids="selectedQuadratIds" :guide-visible="guideVisible" :active-tool="activeCanvasTool" @canvas-click="handleCanvasClick" @select-quadrat="selectQuadrat" />
-          <el-alert v-if="errorMessage" class="canvas-alert" :title="errorMessage" type="warning" :closable="false" show-icon><template #icon><el-icon><WarningFilled /></el-icon></template></el-alert>
+          <SceneCanvas ref="sceneCanvasRef" :scene="scene" :quadrats="quadrats" :selected-quadrat-id="selectedQuadratId" :selected-quadrat-ids="selectedQuadratIds" :guide-visible="guideVisible" :guide-anchor-quadrat-id="guideAnchorQuadratId" :active-tool="activeCanvasTool" @canvas-click="handleCanvasClick" @select-quadrat="selectQuadrat" />
         </section>
 
         <aside class="inspector-rail" aria-label="样方统计与估算">

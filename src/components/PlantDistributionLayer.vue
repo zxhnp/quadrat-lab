@@ -35,8 +35,8 @@ const scenePlantKinds: Record<SceneKind, readonly PlantKind[]> = {
 };
 
 const visibleCaps: Record<SceneKind, Record<PlantKind, number>> = {
-  grassland: { artemisia: 240, foxtail: 110, groundcover: 90, dandelion: 0, iris: 0 },
-  greenbelt: { artemisia: 0, groundcover: 0, dandelion: 80, foxtail: 50, iris: 48 },
+  grassland: { artemisia: 240, foxtail: 1500, groundcover: 1500, dandelion: 0, iris: 0 },
+  greenbelt: { artemisia: 0, groundcover: 0, dandelion: 200, foxtail: 80, iris: 150 },
 };
 
 const props = defineProps<{
@@ -56,6 +56,14 @@ const imageCache = new Map<PlantKind, HTMLImageElement>();
 let resizeObserver: ResizeObserver | null = null;
 let mounted = false;
 let imageLoadVersion = 0;
+let drawFrame: number | null = null;
+let contentVersion = 0;
+let lastDrawnCanvas: HTMLCanvasElement | null = null;
+let lastDrawnContentVersion = -1;
+let lastDrawnScale = -1;
+let lastDrawnWidth = -1;
+let lastDrawnHeight = -1;
+let lastDrawnRatio = -1;
 let overviewPlants: Plant[] = [];
 const renderedPlants = shallowRef<Plant[]>([]);
 
@@ -86,6 +94,7 @@ function refreshOverviewPlants(): void {
   }
   overviewPlants.sort((first, second) => mapPoint(first, sceneKind).y - mapPoint(second, sceneKind).y);
   renderedPlants.value = overviewPlants;
+  contentVersion += 1;
 }
 
 function plantMetrics(plant: Plant): { height: number; width: number } {
@@ -103,6 +112,14 @@ function draw(): void {
   const height = canvas.clientHeight;
   if (!width || !height) return;
   const ratio = Math.min((window.devicePixelRatio || 1) * Math.min(props.displayScale, 4), 4);
+  if (
+    canvas === lastDrawnCanvas
+    && contentVersion === lastDrawnContentVersion
+    && props.displayScale === lastDrawnScale
+    && width === lastDrawnWidth
+    && height === lastDrawnHeight
+    && ratio === lastDrawnRatio
+  ) return;
   canvas.width = Math.round(width * ratio);
   canvas.height = Math.round(height * ratio);
   const context = canvas.getContext("2d");
@@ -114,8 +131,10 @@ function draw(): void {
   context.clearRect(0, 0, width, height);
   const viewBoxWidth = props.scene.kind === "grassland" ? 760 : 1200;
   const viewBoxHeight = props.scene.kind === "grassland" ? 760 : 700;
+  const scaleX = width / viewBoxWidth;
+  const scaleY = height / viewBoxHeight;
   context.save();
-  context.scale(width / viewBoxWidth, height / viewBoxHeight);
+  context.scale(scaleX, scaleY);
   if (props.scene.kind === "grassland") {
     context.beginPath();
     context.roundRect(0, 0, 760, 760, 14);
@@ -126,6 +145,8 @@ function draw(): void {
     context.clip();
   }
 
+  context.globalAlpha = .98;
+  context.fillStyle = "rgba(17, 49, 24, .28)";
   for (const plant of renderedPlants.value) {
     const image = imageCache.get(plant.kind);
     if (!image) continue;
@@ -133,18 +154,37 @@ function draw(): void {
     const style = plantStyles[plant.kind];
     const { height, width } = plantMetrics(plant);
     const sourceHeight = image.naturalHeight * (1 - style.cropBottom);
-    context.save();
-    context.translate(point.x, point.y);
-    context.rotate(plant.angle * Math.PI / 180);
-    context.globalAlpha = .98;
-    context.fillStyle = "rgba(17, 49, 24, .28)";
+    const radians = plant.angle * Math.PI / 180;
+    const cosine = Math.cos(radians);
+    const sine = Math.sin(radians);
+    context.setTransform(
+      ratio * scaleX * cosine,
+      ratio * scaleY * sine,
+      -ratio * scaleX * sine,
+      ratio * scaleY * cosine,
+      ratio * scaleX * point.x,
+      ratio * scaleY * point.y,
+    );
     context.beginPath();
     context.ellipse(0, 0, Math.max(2, width * .3), Math.max(1, height * .055), 0, 0, Math.PI * 2);
     context.fill();
     context.drawImage(image, 0, 0, image.naturalWidth, sourceHeight, -width / 2, -height, width, height);
-    context.restore();
   }
   context.restore();
+  lastDrawnCanvas = canvas;
+  lastDrawnContentVersion = contentVersion;
+  lastDrawnScale = props.displayScale;
+  lastDrawnWidth = width;
+  lastDrawnHeight = height;
+  lastDrawnRatio = ratio;
+}
+
+function scheduleDraw(): void {
+  if (!mounted || drawFrame !== null) return;
+  drawFrame = requestAnimationFrame(() => {
+    drawFrame = null;
+    draw();
+  });
 }
 
 async function loadSceneImages(sceneKind: SceneKind): Promise<void> {
@@ -159,24 +199,25 @@ async function loadSceneImages(sceneKind: SceneKind): Promise<void> {
     });
   }));
   if (version === imageLoadVersion && props.scene.kind === sceneKind) {
+    contentVersion += 1;
     refreshing.value = false;
-    draw();
+    scheduleDraw();
   }
 }
 
 watch(() => props.scene, (nextScene) => {
   refreshing.value = true;
   refreshOverviewPlants();
-  draw();
+  scheduleDraw();
   void loadSceneImages(nextScene.kind);
 });
 
-watch(() => props.displayScale, draw);
+watch(() => props.displayScale, scheduleDraw);
 
 onMounted(() => {
   mounted = true;
   refreshOverviewPlants();
-  resizeObserver = new ResizeObserver(draw);
+  resizeObserver = new ResizeObserver(scheduleDraw);
   if (canvasRef.value) resizeObserver.observe(canvasRef.value);
   refreshing.value = true;
   void loadSceneImages(props.scene.kind);
@@ -184,6 +225,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   mounted = false;
+  if (drawFrame !== null) cancelAnimationFrame(drawFrame);
+  drawFrame = null;
+  lastDrawnCanvas = null;
   resizeObserver?.disconnect();
   resizeObserver = null;
   imageLoadVersion += 1;

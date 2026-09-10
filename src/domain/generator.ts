@@ -34,7 +34,7 @@ function coveredPoint(
   index: number,
   total: number,
 ): { x: number; y: number } {
-  // 先用网格覆盖保证每个区域都有植物，再用斑块采样保留草原的聚集感。
+  // 先用网格覆盖保证每个区域都有植物，再用斑块采样保留草地的聚集感。
   const coverageCount = Math.floor(total * .42);
   if (index < coverageCount) {
     const columns = 5;
@@ -57,6 +57,14 @@ function scatteredPoint(random: () => number, width: number, height: number): { 
   };
 }
 
+function spreadGreenbeltPoint(random: () => number, existing: Array<{ x: number; y: number }>, minDistance: number): { x: number; y: number } {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const candidate = scatteredPoint(random, 20, 2);
+    if (existing.every((point) => Math.hypot(candidate.x - point.x, candidate.y - point.y) >= minDistance)) return candidate;
+  }
+  return scatteredPoint(random, 20, 2);
+}
+
 function createGrassland(seed: number): SceneDefinition {
   const random = mulberry32(seed);
   const plants: Plant[] = [];
@@ -70,12 +78,12 @@ function createGrassland(seed: number): SceneDefinition {
     const point = scatteredPoint(random, 50, 50);
     plants.push(plant(`artemisia-${i}`, "artemisia", point.x, point.y, random, 0.42));
   }
-  for (let i = 0; i < 4200; i++) {
-    const point = coveredPoint(random, 50, 50, otherCenters, i, 4200);
+  for (let i = 0; i < 1500; i++) {
+    const point = coveredPoint(random, 50, 50, otherCenters, i, 1500);
     plants.push(plant(`foxtail-${i}`, "foxtail", point.x, point.y, random, 0.46));
   }
-  for (let i = 0; i < 3600; i++) {
-    const point = coveredPoint(random, 50, 50, otherCenters, i, 3600);
+  for (let i = 0; i < 1500; i++) {
+    const point = coveredPoint(random, 50, 50, otherCenters, i, 1500);
     plants.push(plant(`groundcover-${i}`, "groundcover", point.x, point.y, random, 0.4));
   }
   return {
@@ -93,23 +101,27 @@ function createGrassland(seed: number): SceneDefinition {
 function createGreenbelt(seed: number): SceneDefinition {
   const random = mulberry32(seed);
   const plants: Plant[] = [];
-  const irisRowPositions = [.36, 1, 1.64] as const;
-  const irisColumns = 16;
+  const irisRowPositions = [.22, .61, 1, 1.39, 1.78] as const;
+  const irisColumns = 30;
+  const dandelionPoints: Array<{ x: number; y: number }> = [];
+  const foxtailPoints: Array<{ x: number; y: number }> = [];
   for (let row = 0; row < irisRowPositions.length; row++) {
     for (let column = 0; column < irisColumns; column++) {
-      const stagger = row % 2 === 0 ? 0 : .34;
+      const stagger = row % 2 === 0 ? 0 : .22;
       const x = Math.min(19.65, Math.max(.35, (column + .45 + stagger) / irisColumns * 20 + (random() - .5) * .18));
-      const y = irisRowPositions[row]! + (random() - .5) * .08;
+      const y = irisRowPositions[row]! + (random() - .5) * .06;
       plants.push(plant(`iris-${row}-${column}`, "iris", x, y, random, 0.58));
     }
   }
   const dandelionCount = 20 * 2 * 5;
   for (let i = 0; i < dandelionCount; i++) {
-    const point = scatteredPoint(random, 20, 2);
+    const point = spreadGreenbeltPoint(random, dandelionPoints, .22);
+    dandelionPoints.push(point);
     plants.push(plant(`dandelion-${i}`, "dandelion", point.x, point.y, random, 0.4));
   }
-  for (let i = 0; i < 120; i++) {
-    const point = scatteredPoint(random, 20, 2);
+  for (let i = 0; i < 80; i++) {
+    const point = spreadGreenbeltPoint(random, foxtailPoints, .34);
+    foxtailPoints.push(point);
     plants.push(plant(`foxtail-${i}`, "foxtail", point.x, point.y, random, 0.44));
   }
   return {

@@ -17,7 +17,7 @@ export const sceneMeta: Record<SceneKind, {
   intro: string;
 }> = {
   grassland: {
-    label: "草原",
+    label: "草地",
     subtitle: "天然草地 · 斑块式分布",
     dimensions: "50m × 50m",
     samplingLabel: "五点取样法",

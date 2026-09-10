@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import {
   ArrowDownBold,
   Back,
@@ -22,6 +23,7 @@ const props = defineProps<{
   canClear: boolean;
   canSelectAll: boolean;
   canClearSelection: boolean;
+  showViewportTools: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -36,11 +38,15 @@ const emit = defineEmits<{
   clearSelection: [];
 }>();
 
-const primaryTools: Array<{ id: CanvasTool; label: string; detail?: string; icon: typeof Pointer }> = [
+const allPrimaryTools: Array<{ id: CanvasTool; label: string; detail?: string; icon: typeof Pointer }> = [
   { id: "cursor", label: "光标", icon: Pointer },
-  { id: "select", label: "选取样方", detail: "1m² × 1m²", icon: Crop },
+  { id: "select", label: "选取样方", detail: "1m × 1m", icon: Crop },
   { id: "pan", label: "拖动画布", icon: Rank },
 ];
+
+const primaryTools = computed(() => props.showViewportTools
+  ? allPrimaryTools
+  : allPrimaryTools.filter((tool) => tool.id !== "pan"));
 
 function handleSelectionCommand(command: string): void {
   if (command === "select-all") emit("selectAll");
@@ -101,14 +107,16 @@ function handleSelectionCommand(command: string): void {
       <span>{{ props.guideLabel }}</span>
     </button>
 
-    <div class="toolbar-divider" />
+    <template v-if="props.showViewportTools">
+      <div class="toolbar-divider" />
 
-    <button class="toolbar-button" type="button" @click="emit('zoomIn')">
-      <el-icon><ZoomIn /></el-icon><span>放大</span>
-    </button>
-    <button class="toolbar-button" type="button" @click="emit('zoomOut')">
-      <el-icon><ZoomOut /></el-icon><span>缩小</span>
-    </button>
+      <button class="toolbar-button" type="button" @click="emit('zoomIn')">
+        <el-icon><ZoomIn /></el-icon><span>放大</span>
+      </button>
+      <button class="toolbar-button" type="button" @click="emit('zoomOut')">
+        <el-icon><ZoomOut /></el-icon><span>缩小</span>
+      </button>
+    </template>
     <button class="toolbar-button" type="button" @click="emit('resetScene')">
       <el-icon><Refresh /></el-icon><span>重置</span>
     </button>
