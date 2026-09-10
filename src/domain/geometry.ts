@@ -1,18 +1,27 @@
 import type { Point, Plant, Quadrat, SceneDefinition } from "../types";
 
-export const QUADRAT_SIZE = 1;
+export const GRASSLAND_QUADRAT_SIZE = 1;
+export const GREENBELT_QUADRAT_SIZE = 1;
+export const FIVE_POINT_CENTER_DISTANCE = 2;
+
+const FIVE_POINT_SNAP_DISTANCE = 0.75;
+
+export function quadratSizeForScene(scene: SceneDefinition): number {
+  return scene.kind === "grassland" ? GRASSLAND_QUADRAT_SIZE : GREENBELT_QUADRAT_SIZE;
+}
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
 export function normalizeQuadrat(point: Point, scene: SceneDefinition): Quadrat {
+  const size = quadratSizeForScene(scene);
   return {
     id: "pending",
     index: 0,
-    x: clamp(point.x - QUADRAT_SIZE / 2, 0, scene.widthMeters - QUADRAT_SIZE),
-    y: clamp(point.y - QUADRAT_SIZE / 2, 0, scene.heightMeters - QUADRAT_SIZE),
-    size: QUADRAT_SIZE,
+    x: clamp(point.x - size / 2, 0, scene.widthMeters - size),
+    y: clamp(point.y - size / 2, 0, scene.heightMeters - size),
+    size,
   };
 }
 
@@ -29,39 +38,41 @@ export function hasOverlap(candidate: Quadrat, existing: Quadrat[]): boolean {
 }
 
 export function fivePointQuadrats(center: Quadrat, scene: SceneDefinition): Quadrat[] {
-  const half = 8;
+  const axisOffset = FIVE_POINT_CENTER_DISTANCE / Math.SQRT2;
+  const size = center.size;
   const centerPoint = { x: center.x + center.size / 2, y: center.y + center.size / 2 };
-  const safeX = clamp(centerPoint.x, half + 0.5, scene.widthMeters - half - 0.5);
-  const safeY = clamp(centerPoint.y, half + 0.5, scene.heightMeters - half - 0.5);
+  const safeX = clamp(centerPoint.x, axisOffset + size / 2, scene.widthMeters - axisOffset - size / 2);
+  const safeY = clamp(centerPoint.y, axisOffset + size / 2, scene.heightMeters - axisOffset - size / 2);
   const points: Point[] = [
     { x: safeX, y: safeY },
-    { x: safeX - half, y: safeY - half },
-    { x: safeX + half, y: safeY - half },
-    { x: safeX - half, y: safeY + half },
-    { x: safeX + half, y: safeY + half },
+    { x: safeX - axisOffset, y: safeY - axisOffset },
+    { x: safeX + axisOffset, y: safeY - axisOffset },
+    { x: safeX - axisOffset, y: safeY + axisOffset },
+    { x: safeX + axisOffset, y: safeY + axisOffset },
   ];
   return points.map((point, index) => ({
     id: `guide-${index + 1}`,
     index: index + 1,
-    x: clamp(point.x - QUADRAT_SIZE / 2, 0, scene.widthMeters - QUADRAT_SIZE),
-    y: clamp(point.y - QUADRAT_SIZE / 2, 0, scene.heightMeters - QUADRAT_SIZE),
-    size: QUADRAT_SIZE,
+    x: clamp(point.x - size / 2, 0, scene.widthMeters - size),
+    y: clamp(point.y - size / 2, 0, scene.heightMeters - size),
+    size,
   }));
 }
 
 export function nearestGuideQuadrat(point: Point, center: Quadrat, scene: SceneDefinition): Quadrat | null {
   const candidate = fivePointQuadrats(center, scene).slice(1).reduce<{ quadrat: Quadrat | null; distance: number }>((best, quadrat) => {
-    const distance = Math.hypot(point.x - (quadrat.x + 0.5), point.y - (quadrat.y + 0.5));
+    const distance = Math.hypot(point.x - (quadrat.x + quadrat.size / 2), point.y - (quadrat.y + quadrat.size / 2));
     return distance < best.distance ? { quadrat, distance } : best;
   }, { quadrat: null, distance: Number.POSITIVE_INFINITY });
-  return candidate.distance <= 2 ? candidate.quadrat : null;
+  return candidate.distance <= FIVE_POINT_SNAP_DISTANCE ? candidate.quadrat : null;
 }
 
 export function snappedEquidistantQuadrat(point: Point, first: Quadrat, spacing: number, scene: SceneDefinition): Quadrat | null {
+  const size = first.size;
   const firstCenter = first.x + first.size / 2;
   const step = Math.max(1, Math.round((point.x - firstCenter) / spacing));
   const center = firstCenter + step * spacing;
-  if (center < QUADRAT_SIZE / 2 || center > scene.widthMeters - QUADRAT_SIZE / 2) return null;
-  const x = center - QUADRAT_SIZE / 2;
-  return { id: "pending", index: 0, x, y: first.y, size: QUADRAT_SIZE };
+  if (center < size / 2 || center > scene.widthMeters - size / 2) return null;
+  const x = center - size / 2;
+  return { id: "pending", index: 0, x, y: first.y, size };
 }

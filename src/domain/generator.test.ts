@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateScene } from "./generator";
+import { generateScene, GRASSLAND_TARGET_DENSITY } from "./generator";
 
 function signature(scene: ReturnType<typeof generateScene>, kind: "artemisia" | "foxtail" | "groundcover" | "dandelion" | "iris") {
   return scene.plants
@@ -27,29 +27,37 @@ describe("植物分布生成器", () => {
     }
   });
 
-  it("绿化带鸢尾花按上下两行横向铺满", () => {
+  it("绿化带鸢尾花按上中下三行横向铺满", () => {
     const irises = generateScene("greenbelt", 303).plants.filter((plant) => plant.kind === "iris");
-    const rows = [0, 1].map((row) => irises.filter((plant) => plant.id.startsWith(`iris-${row}-`)));
+    const rows = [0, 1, 2].map((row) => irises.filter((plant) => plant.id.startsWith(`iris-${row}-`)));
 
-    expect(irises).toHaveLength(32);
+    expect(irises).toHaveLength(48);
     expect(rows.every((row) => row.length === 16)).toBe(true);
     expect(Math.min(...irises.map((plant) => plant.x))).toBeLessThan(1.2);
     expect(Math.max(...irises.map((plant) => plant.x))).toBeGreaterThan(18.8);
-    expect(Math.max(...rows[0]!.map((plant) => plant.y))).toBeLessThan(.6);
-    expect(Math.min(...rows[1]!.map((plant) => plant.y))).toBeGreaterThan(1.6);
+    expect(Math.max(...rows[0]!.map((plant) => plant.y))).toBeLessThan(.5);
+    expect(Math.min(...rows[1]!.map((plant) => plant.y))).toBeGreaterThan(.9);
+    expect(Math.max(...rows[1]!.map((plant) => plant.y))).toBeLessThan(1.1);
+    expect(Math.min(...rows[2]!.map((plant) => plant.y))).toBeGreaterThan(1.5);
   });
 
-  it("两个场景的每个整米样方都有五株目标植物", () => {
+  it("两个场景保持各自的总体密度，但局部样方自然波动", () => {
     const grassland = generateScene("grassland", 404);
     const greenbelt = generateScene("greenbelt", 505);
 
     for (const [scene, kind] of [[grassland, "artemisia"], [greenbelt, "dandelion"]] as const) {
-      for (let y = 0; y < scene.heightMeters; y++) {
-        for (let x = 0; x < scene.widthMeters; x++) {
-          const count = scene.plants.filter((item) => item.kind === kind && item.x >= x && item.x < x + 1 && item.y >= y && item.y < y + 1).length;
-          expect(count).toBe(5);
-        }
+      const counts = Array.from({ length: scene.widthMeters * scene.heightMeters }, () => 0);
+      const targetPlants = scene.plants.filter((plant) => plant.kind === kind);
+      for (const plant of targetPlants) {
+        const cellIndex = Math.floor(plant.y) * scene.widthMeters + Math.floor(plant.x);
+        counts[cellIndex] = (counts[cellIndex] ?? 0) + 1;
       }
+      const expectedDensity = scene.kind === "grassland" ? GRASSLAND_TARGET_DENSITY : 5;
+      const expectedCount = scene.area * expectedDensity;
+      expect(targetPlants).toHaveLength(expectedCount);
+      expect(targetPlants.length / scene.area).toBe(expectedDensity);
+      expect(new Set(counts).size).toBeGreaterThan(1);
+      expect(counts.some((count) => count !== 5)).toBe(true);
     }
   });
 });

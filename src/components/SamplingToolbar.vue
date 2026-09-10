@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  ArrowDownBold,
   Back,
   Connection,
   Crop,
@@ -19,6 +20,8 @@ const props = defineProps<{
   canGuide: boolean;
   canUndo: boolean;
   canClear: boolean;
+  canSelectAll: boolean;
+  canClearSelection: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -26,32 +29,65 @@ const emit = defineEmits<{
   toggleGuide: [];
   zoomIn: [];
   zoomOut: [];
-  resetZoom: [];
+  resetScene: [];
   undo: [];
   clear: [];
+  selectAll: [];
+  clearSelection: [];
 }>();
 
-const primaryTools: Array<{ id: CanvasTool; label: string; icon: typeof Pointer }> = [
+const primaryTools: Array<{ id: CanvasTool; label: string; detail?: string; icon: typeof Pointer }> = [
   { id: "cursor", label: "光标", icon: Pointer },
-  { id: "select", label: "框选", icon: Crop },
+  { id: "select", label: "选取样方", detail: "1m² × 1m²", icon: Crop },
   { id: "pan", label: "拖动画布", icon: Rank },
 ];
+
+function handleSelectionCommand(command: string): void {
+  if (command === "select-all") emit("selectAll");
+  if (command === "clear-selection") emit("clearSelection");
+}
 </script>
 
 <template>
   <aside class="sampling-toolbar" aria-label="取样工具栏">
-    <button
+    <div
       v-for="tool in primaryTools"
       :key="tool.id"
-      class="toolbar-button"
-      :class="{ active: props.activeTool === tool.id }"
-      type="button"
-      :aria-pressed="props.activeTool === tool.id"
-      @click="emit('toolChange', tool.id)"
+      class="toolbar-item"
     >
-      <el-icon><component :is="tool.icon" /></el-icon>
-      <span>{{ tool.label }}</span>
-    </button>
+      <button
+        class="toolbar-button"
+        :class="{ active: props.activeTool === tool.id }"
+        type="button"
+        :aria-pressed="props.activeTool === tool.id"
+        @click="emit('toolChange', tool.id)"
+      >
+        <el-icon><component :is="tool.icon" /></el-icon>
+        <span class="toolbar-copy">
+          <span>{{ tool.label }}</span>
+          <small v-if="tool.detail">{{ tool.detail }}</small>
+        </span>
+      </button>
+
+      <el-dropdown
+        v-if="tool.id === 'cursor'"
+        class="toolbar-selection-menu"
+        trigger="click"
+        placement="right-start"
+        popper-class="quadrat-selection-dropdown"
+        @command="handleSelectionCommand"
+      >
+        <button class="toolbar-menu-trigger" type="button" aria-label="样方选择菜单">
+          <el-icon><ArrowDownBold /></el-icon>
+        </button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="select-all" :disabled="!props.canSelectAll">全选样方</el-dropdown-item>
+            <el-dropdown-item command="clear-selection" :disabled="!props.canClearSelection">取消选择</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </div>
 
     <button
       class="toolbar-button"
@@ -73,7 +109,7 @@ const primaryTools: Array<{ id: CanvasTool; label: string; icon: typeof Pointer 
     <button class="toolbar-button" type="button" @click="emit('zoomOut')">
       <el-icon><ZoomOut /></el-icon><span>缩小</span>
     </button>
-    <button class="toolbar-button" type="button" @click="emit('resetZoom')">
+    <button class="toolbar-button" type="button" @click="emit('resetScene')">
       <el-icon><Refresh /></el-icon><span>重置</span>
     </button>
 

@@ -3,8 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import grasslandArtwork from "../assets/scenes/grassland-soil-bg.webp";
 import greenbeltArtwork from "../assets/scenes/greenbelt-soil-bg.webp";
 import { plantMeta } from "../data";
-import { countPlantsInQuadrat } from "../domain/calculator";
-import { fivePointQuadrats } from "../domain/geometry";
+import { countPlantsInQuadrat, plantsInQuadrat } from "../domain/calculator";
+import { FIVE_POINT_CENTER_DISTANCE, fivePointQuadrats, quadratSizeForScene } from "../domain/geometry";
 import PlantDistributionLayer from "./PlantDistributionLayer.vue";
 import type { CanvasTool, PlantKind, Point, Quadrat, SceneDefinition, SceneKind } from "../types";
 
@@ -17,8 +17,8 @@ const props = defineProps<{
   scene: SceneDefinition;
   quadrats: Quadrat[];
   selectedQuadratId: string | null;
+  selectedQuadratIds: string[];
   guideVisible: boolean;
-  counted: boolean;
   activeTool: CanvasTool;
 }>();
 
@@ -45,31 +45,23 @@ const panDrag = ref<{
 } | null>(null);
 let viewportObserver: ResizeObserver | null = null;
 
+const zoomLevels = [1, 2, 4, 6, 8] as const;
+const samplingZoom = 4;
 const minZoom = 1;
-const maxZoom = 2.5;
-const zoomStep = .5;
+const maxZoom = 8;
 const grasslandViewBox = { width: 760, height: 760 };
 const greenbeltViewBox = { width: 1200, height: 700 };
 const grassField = { left: 0, top: 0, size: 760 };
 // 与底图中上下石质边界之间的裸土种植区严格对齐。
 const beltField = { left: 32, top: 245, width: 1136, height: 220 };
 const viewBox = computed(() => props.scene.kind === "grassland" ? grasslandViewBox : greenbeltViewBox);
-function displayScaleForZoom(zoom: number): number {
-  if (zoom <= 1) return 1;
-  if (zoom <= 1.5) return 1 + (zoom - 1) / .5 * 7;
-  if (zoom <= 2) return 8 + (zoom - 1.5) / .5 * 16;
-  return 24 + (zoom - 2) / .5 * 8;
-}
-
-const displayScale = computed(() => displayScaleForZoom(grasslandZoom.value));
+const displayScale = computed(() => grasslandZoom.value);
 const stageFrameStyle = computed(() => {
   if (props.scene.kind !== "grassland" || !grasslandBaseSize.value) return undefined;
   const size = grasslandBaseSize.value * displayScale.value;
   return {
     width: `${size}px`,
     height: `${size}px`,
-    backgroundImage: `url(${sceneArtworks.grassland})`,
-    backgroundSize: `${grasslandBaseSize.value}px ${grasslandBaseSize.value}px`,
   };
 });
 const stageStyle = computed(() => {
@@ -83,10 +75,26 @@ const stageStyle = computed(() => {
 });
 const zoomLabel = computed(() => `${Math.round(grasslandZoom.value * 100)}%`);
 const selectedQuadrat = computed(() => props.quadrats.find((item) => item.id === props.selectedQuadratId) ?? null);
+const selectedQuadratIdSet = computed(() => new Set(props.selectedQuadratIds));
 const quadratDensities = computed(() => new Map(props.quadrats.map((quadrat) => [
   quadrat.id,
   countPlantsInQuadrat(props.scene, quadrat) / (quadrat.size * quadrat.size),
 ])));
+const leftLabelQuadratIds = computed(() => {
+  if (props.scene.kind !== "grassland" || props.quadrats.length < 4) return new Set<string>();
+  const leftmostQuadrats = [...props.quadrats]
+    .sort((first, second) => first.x - second.x || first.y - second.y)
+    .slice(0, 2);
+  return new Set(leftmostQuadrats.map((quadrat) => quadrat.id));
+});
+const selectedTargetMarkerGroups = computed(() => props.quadrats
+  .filter((quadrat) => selectedQuadratIdSet.value.has(quadrat.id))
+  .map((quadrat) => ({
+    quadratId: quadrat.id,
+    markers: plantsInQuadrat(props.scene, quadrat)
+      .sort((first, second) => first.y - second.y || first.x - second.x)
+      .map((plant, index) => ({ ...mapPoint(plant.x, plant.y), index: index + 1 })),
+  })));
 
 function mapPoint(x: number, y: number): Point {
   if (props.scene.kind === "grassland") return { x: grassField.left + x / 50 * grassField.size, y: grassField.top + y / 50 * grassField.size };
@@ -96,7 +104,7 @@ function mapPoint(x: number, y: number): Point {
 const guideQuadrats = computed(() => props.scene.kind === "grassland" && props.guideVisible && props.quadrats.length ? fivePointQuadrats(props.quadrats[0]!, props.scene) : []);
 const guideLinePath = computed(() => {
   if (guideQuadrats.value.length !== 5) return "";
-  const points = guideQuadrats.value.map((quadrat) => mapPoint(quadrat.x + .5, quadrat.y + .5));
+  const points = guideQuadrats.value.map((quadrat) => mapPoint(quadrat.x + quadrat.size / 2, quadrat.y + quadrat.size / 2));
   const tl = points[1]!;
   const tr = points[2]!;
   const bl = points[3]!;
@@ -130,41 +138,31 @@ function badgeScale(): number {
   return props.scene.kind === "grassland" ? displayScale.value : 1;
 }
 
-function densityBadgeMetrics(quadrat: Quadrat) {
+function densityLabelMetrics(quadrat: Quadrat) {
   const mapped = mapQuadrat(quadrat);
   const scale = badgeScale();
-  const width = scale === 1 ? 68 : 120 / scale;
-  const height = scale === 1 ? 24 : 40 / scale;
+  const isGrassland = props.scene.kind === "grassland";
+  const zoomProgress = isGrassland ? Math.min(1, Math.max(0, (scale - 1) / 3)) : 0;
+  // 低倍视图保持紧凑；达到建议取样比例后保持稳定、清晰的屏幕字号。
+  const screenFontSize = isGrassland ? 10.5 + zoomProgress * 3.5 : 16;
+  const fontSize = screenFontSize / scale;
+  const gap = (isGrassland ? 3 : 5) / scale;
+  const estimatedWidth = densityLabel(quadrat).length * fontSize * .65;
+  const canPlaceOnLeft = mapped.x - gap - estimatedWidth >= 1;
+  const canPlaceOnRight = mapped.x + mapped.width + gap + estimatedWidth <= viewBox.value.width - 1;
+  const preferLeft = leftLabelQuadratIds.value.has(quadrat.id);
+  const placeOnRight = preferLeft ? !canPlaceOnLeft && canPlaceOnRight : canPlaceOnRight || !canPlaceOnLeft;
   return {
-    x: Math.min(viewBox.value.width - width - 1, Math.max(1, mapped.x + mapped.width - width)),
-    y: Math.max(1, mapped.y - height - 1),
-    width,
-    height,
-    radius: scale === 1 ? 8 : 12 / scale,
-    fontSize: scale === 1 ? 14 : 22 / scale,
-    padding: scale === 1 ? 8 : 10 / scale,
-  };
-}
-
-function sizeBadgeMetrics(quadrat: Quadrat) {
-  const mapped = mapQuadrat(quadrat);
-  const scale = badgeScale();
-  const width = scale === 1 ? 62 : 130 / scale;
-  const height = scale === 1 ? 20 : 36 / scale;
-  return {
-    x: mapped.x + mapped.width - width,
-    y: mapped.y + mapped.height - height,
-    width,
-    height,
-    radius: scale === 1 ? 7 : 11 / scale,
-    fontSize: scale === 1 ? 12 : 18 / scale,
-    padding: scale === 1 ? 7 : 9 / scale,
+    x: placeOnRight ? mapped.x + mapped.width + gap : mapped.x - gap,
+    y: Math.min(viewBox.value.height - 1, Math.max(fontSize, mapped.y + fontSize * .9)),
+    fontSize,
+    textAnchor: placeOnRight ? "start" : "end",
   };
 }
 
 function quadratRectStyle(quadrat: Quadrat) {
   const scale = badgeScale();
-  const selected = quadrat.id === props.selectedQuadratId;
+  const selected = selectedQuadratIdSet.value.has(quadrat.id);
   return {
     strokeWidth: `${(selected ? 3 : 2) / scale}`,
     strokeDasharray: selected ? `${8 / scale} ${5 / scale}` : "none",
@@ -182,7 +180,7 @@ function eventToWorld(event: PointerEvent): Point | null {
 }
 
 function fixedQuadratFromDrag(start: Point, current: Point): Quadrat {
-  const size = 1;
+  const size = quadratSizeForScene(props.scene);
   const maxX = props.scene.widthMeters - size;
   const maxY = props.scene.heightMeters - size;
   const x = current.x < start.x ? start.x - size : start.x;
@@ -251,7 +249,7 @@ function finishDrag(event: PointerEvent, commit: boolean): void {
   if (svgRef.value?.hasPointerCapture(event.pointerId)) svgRef.value.releasePointerCapture(event.pointerId);
   dragSelection.value = null;
   if (commit && drag.distance >= 4) {
-    emit("canvasClick", { x: drag.preview.x + .5, y: drag.preview.y + .5 });
+    emit("canvasClick", { x: drag.preview.x + drag.preview.size / 2, y: drag.preview.y + drag.preview.size / 2 });
   }
 }
 
@@ -272,10 +270,10 @@ function measureViewport(): void {
 function applyZoom(nextZoom: number, focalPoint?: Point): void {
   const viewport = viewportRef.value;
   if (!viewport || props.scene.kind !== "grassland") return;
-  const oldSize = grasslandBaseSize.value * displayScaleForZoom(grasslandZoom.value);
+  const oldSize = grasslandBaseSize.value * grasslandZoom.value;
   let focus = focalPoint;
   if (!focus && selectedQuadrat.value) {
-    const mappedCenter = mapPoint(selectedQuadrat.value.x + .5, selectedQuadrat.value.y + .5);
+    const mappedCenter = mapPoint(selectedQuadrat.value.x + selectedQuadrat.value.size / 2, selectedQuadrat.value.y + selectedQuadrat.value.size / 2);
     const visibleCenter = {
       x: mappedCenter.x / grasslandViewBox.width * oldSize - viewport.scrollLeft,
       y: mappedCenter.y / grasslandViewBox.height * oldSize - viewport.scrollTop,
@@ -287,10 +285,16 @@ function applyZoom(nextZoom: number, focalPoint?: Point): void {
   const relativeY = oldSize ? (viewport.scrollTop + focus.y) / oldSize : .5;
   grasslandZoom.value = Math.min(maxZoom, Math.max(minZoom, nextZoom));
   void nextTick(() => {
-    const newSize = grasslandBaseSize.value * displayScaleForZoom(grasslandZoom.value);
+    const newSize = grasslandBaseSize.value * grasslandZoom.value;
     viewport.scrollLeft = relativeX * newSize - focus.x;
     viewport.scrollTop = relativeY * newSize - focus.y;
   });
+}
+
+function adjacentZoom(direction: 1 | -1): number {
+  const currentIndex = zoomLevels.findIndex((level) => level === grasslandZoom.value);
+  const nextIndex = Math.min(zoomLevels.length - 1, Math.max(0, currentIndex + direction));
+  return zoomLevels[nextIndex] ?? grasslandZoom.value;
 }
 
 function handleWheel(event: WheelEvent): void {
@@ -298,7 +302,7 @@ function handleWheel(event: WheelEvent): void {
   const viewport = viewportRef.value;
   if (!viewport) return;
   const bounds = viewport.getBoundingClientRect();
-  applyZoom(grasslandZoom.value + (event.deltaY < 0 ? zoomStep : -zoomStep), {
+  applyZoom(adjacentZoom(event.deltaY < 0 ? 1 : -1), {
     x: event.clientX - bounds.left,
     y: event.clientY - bounds.top,
   });
@@ -323,18 +327,31 @@ onBeforeUnmount(() => {
 });
 
 function zoomIn(): void {
-  applyZoom(grasslandZoom.value + zoomStep);
+  applyZoom(adjacentZoom(1));
 }
 
 function zoomOut(): void {
-  applyZoom(grasslandZoom.value - zoomStep);
+  applyZoom(adjacentZoom(-1));
 }
 
 function resetZoom(): void {
-  applyZoom(1);
+  if (props.scene.kind === "grassland") grasslandZoom.value = 1;
+  const viewport = viewportRef.value;
+  if (viewport) {
+    viewport.scrollLeft = 0;
+    viewport.scrollTop = 0;
+    void nextTick(() => {
+      viewport.scrollLeft = 0;
+      viewport.scrollTop = 0;
+    });
+  }
 }
 
-defineExpose({ zoomIn, zoomOut, resetZoom });
+function focusSamplingZoom(): void {
+  applyZoom(samplingZoom);
+}
+
+defineExpose({ zoomIn, zoomOut, resetZoom, focusSamplingZoom });
 </script>
 
 <template>
@@ -348,7 +365,7 @@ defineExpose({ zoomIn, zoomOut, resetZoom });
       <div class="scene-stage" :class="`scene-stage-${scene.kind}`" :style="stageFrameStyle">
       <div class="scene-artboard" :class="`scene-artboard-${scene.kind}`" :style="stageStyle">
         <img class="scene-artwork" :src="sceneArtworks[scene.kind]" :alt="`${scene.title}场景底图`" />
-        <PlantDistributionLayer :scene="scene" :selected-quadrat="selectedQuadrat" :counted="counted" :display-scale="displayScale" />
+        <PlantDistributionLayer :scene="scene" :display-scale="displayScale" />
         <svg ref="svgRef" class="scene-canvas" :class="[`tool-${activeTool}`, { selecting: dragSelection, panning: panDrag }]" :viewBox="`0 0 ${viewBox.width} ${viewBox.height}`" preserveAspectRatio="none" role="img" :aria-label="`${scene.title}交互画布`" @pointerdown="handlePointerDown" @pointermove="handlePointerMove" @pointerup="handlePointerUp" @pointercancel="handlePointerCancel">
         <template v-if="scene.kind === 'grassland'">
           <g class="five-point-guide">
@@ -373,22 +390,26 @@ defineExpose({ zoomIn, zoomOut, resetZoom });
           </g>
 
           <g class="quadrats">
-          <g v-for="quadrat in quadrats" :key="quadrat.id" class="quadrat" :class="{ selected: quadrat.id === selectedQuadratId }" @pointerdown.stop @click.stop="emit('selectQuadrat', quadrat.id)">
+          <g v-for="quadrat in quadrats" :key="quadrat.id" class="quadrat" :class="{ selected: selectedQuadratIdSet.has(quadrat.id) }" @pointerdown.stop @click.stop="emit('selectQuadrat', quadrat.id)">
             <rect v-bind="mapQuadrat(quadrat)" :style="quadratRectStyle(quadrat)" />
-            <rect :x="densityBadgeMetrics(quadrat).x" :y="densityBadgeMetrics(quadrat).y" :width="densityBadgeMetrics(quadrat).width" :height="densityBadgeMetrics(quadrat).height" :rx="densityBadgeMetrics(quadrat).radius" class="quadrat-label-bg" />
-            <text :x="densityBadgeMetrics(quadrat).x + densityBadgeMetrics(quadrat).padding" :y="densityBadgeMetrics(quadrat).y + densityBadgeMetrics(quadrat).height * .72" :style="{ fontSize: `${densityBadgeMetrics(quadrat).fontSize}px` }">{{ densityLabel(quadrat) }}</text>
-            <template v-if="quadrat.id === selectedQuadratId">
-              <rect :x="sizeBadgeMetrics(quadrat).x" :y="sizeBadgeMetrics(quadrat).y" :width="sizeBadgeMetrics(quadrat).width" :height="sizeBadgeMetrics(quadrat).height" :rx="sizeBadgeMetrics(quadrat).radius" class="quadrat-size-bg" />
-              <text :x="sizeBadgeMetrics(quadrat).x + sizeBadgeMetrics(quadrat).padding" :y="sizeBadgeMetrics(quadrat).y + sizeBadgeMetrics(quadrat).height * .72" :style="{ fontSize: `${sizeBadgeMetrics(quadrat).fontSize}px` }">1m × 1m</text>
-            </template>
+            <text class="quadrat-density-label" :x="densityLabelMetrics(quadrat).x" :y="densityLabelMetrics(quadrat).y" :text-anchor="densityLabelMetrics(quadrat).textAnchor" :style="{ fontSize: `${densityLabelMetrics(quadrat).fontSize}px` }">{{ densityLabel(quadrat) }}</text>
           </g>
+          </g>
+
+          <g v-if="displayScale > 1 && selectedTargetMarkerGroups.length" class="selected-target-markers" aria-label="已选样方内目标植物逐株标记">
+            <g v-for="group in selectedTargetMarkerGroups" :key="group.quadratId" data-testid="selected-quadrat-marker-group" :data-quadrat-id="group.quadratId">
+              <g v-for="marker in group.markers" :key="marker.index" data-testid="selected-target-marker">
+                <circle :cx="marker.x" :cy="marker.y" :r="7 / displayScale" />
+                <text :x="marker.x" :y="marker.y + 3 / displayScale" :style="{ fontSize: `${9 / displayScale}px` }">{{ marker.index }}</text>
+              </g>
+            </g>
           </g>
         </svg>
       </div>
       </div>
     </div>
-    <div v-if="scene.kind === 'grassland'" class="zoom-hint">滚轮或右上角按钮缩放 · 拖动框选固定 1m × 1m 样方</div>
-    <div class="canvas-caption"><span><i class="dot target" />{{ plantMeta[scene.targetPlant].label }}为目标植物</span><span><i class="dot guide" />{{ scene.kind === 'grassland' ? '对角 X 辅助线' : '等距 3m 辅助线' }}</span><span>点击样方可查看统计</span></div>
+    <div v-if="scene.kind === 'grassland'" class="zoom-hint">建议在 400% 下取样 · 拖动框选真实 1m × 1m 样方</div>
+    <div class="canvas-caption"><span><i class="dot target" />{{ plantMeta[scene.targetPlant].label }}为目标植物</span><span><i class="dot guide" />{{ scene.kind === 'grassland' ? `中心距 ${FIVE_POINT_CENTER_DISTANCE}m 的 X 辅助线` : '等距 3m 辅助线' }}</span><span>点击样方可查看统计</span></div>
   </div>
 </template>
 
@@ -397,13 +418,13 @@ defineExpose({ zoomIn, zoomOut, resetZoom });
 .scene-viewport { position: relative; min-width: 0; min-height: 0; flex: 1 1 auto; overflow: hidden; border-radius: 18px; background: #e6ece5; box-shadow: inset 0 0 0 1px rgba(23, 63, 45, .12); }
 .scene-viewport-grassland { display: block; }
 .scene-stage { position: relative; }
-.scene-stage-grassland { margin: 0 auto; background-repeat: repeat; }
+.scene-stage-grassland { margin: 0 auto; }
 .scene-stage-greenbelt { width: 100%; height: 100%; }
 .scene-artboard { position: relative; min-width: 0; min-height: 0; overflow: hidden; border-radius: 17px; background: #e6ece5; }
 .scene-artboard-grassland { aspect-ratio: 1; flex: none; transform-origin: top left; background: transparent; }
 .scene-artboard-greenbelt { width: 100%; height: 100%; }
 .scene-artwork { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: cover; }
-.scene-artboard-grassland .scene-artwork { display: none; }
+.scene-artboard-grassland .scene-artwork { filter: brightness(.92) saturate(.9) contrast(1.04); }
 .scene-artboard-greenbelt .scene-artwork { filter: brightness(.9) saturate(.88) contrast(1.03); }
 .scene-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; overflow: visible; touch-action: none; user-select: none; }
 .scene-canvas.tool-cursor { cursor: default; }
@@ -421,11 +442,12 @@ defineExpose({ zoomIn, zoomOut, resetZoom });
 .greenbelt-overlay text, .dimension-guide text, .road-label { fill: #f8fbf5; font-size: 15px; font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif; paint-order: stroke; stroke: rgba(23, 63, 45, .28); stroke-width: 3px; }
 .road-label { font-size: 17px; font-weight: 800; opacity: .92; }
 .quadrats rect { fill: rgba(255,255,255,.08); stroke: rgba(255,255,255,.92); stroke-width: 2; }
-.quadrats .quadrat-label-bg { fill: #173f2d; stroke: none; }
-.quadrats .quadrat-size-bg { fill: #173f2d; stroke: none; }
 .quadrats text { fill: #fff; font-size: 14px; font-weight: 800; font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif; pointer-events: none; }
 .quadrats .selected rect:first-child { fill: rgba(255, 178, 42, .38); stroke: #ffb22a; stroke-width: 3; }
-.quadrats .selected .quadrat-label-bg { fill: #d88916; }
+.quadrats .quadrat-density-label { fill: #fff; stroke: rgba(14, 45, 32, .96); stroke-width: 1.2px; paint-order: stroke fill; vector-effect: non-scaling-stroke; font-weight: 900; }
+.quadrats .selected .quadrat-density-label { fill: #ffad20; stroke: rgba(45, 31, 14, .96); }
+.selected-target-markers circle { fill: #ff9f0a; stroke: #fff; stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+.selected-target-markers text { fill: #fff; font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif; font-weight: 900; text-anchor: middle; pointer-events: none; }
 .drag-selection rect { fill: rgba(255, 184, 50, .32); stroke: #ffc34f; stroke-width: 3; stroke-dasharray: 7 4; vector-effect: non-scaling-stroke; pointer-events: none; }
 .drag-selection text { fill: #fff; font-size: 14px; font-weight: 800; font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif; paint-order: stroke; stroke: rgba(23, 63, 45, .78); stroke-width: 4px; pointer-events: none; }
 .guide-quadrat { fill: rgba(255,255,255,.08); stroke: #fff; stroke-width: 2; stroke-dasharray: 7 5; vector-effect: non-scaling-stroke; }

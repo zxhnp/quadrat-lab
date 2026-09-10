@@ -4,6 +4,9 @@ import {
   ElButton,
   ElCard,
   ElConfigProvider,
+  ElDropdown,
+  ElDropdownItem,
+  ElDropdownMenu,
   ElIcon,
   ElTable,
   ElTableColumn,
@@ -15,7 +18,7 @@ import App from "./App.vue";
 
 const app = createApp(App);
 
-for (const component of [ElAlert, ElButton, ElCard, ElConfigProvider, ElIcon, ElTable, ElTableColumn, ElTag]) {
+for (const component of [ElAlert, ElButton, ElCard, ElConfigProvider, ElDropdown, ElDropdownItem, ElDropdownMenu, ElIcon, ElTable, ElTableColumn, ElTag]) {
   if (component.name) app.component(component.name, component);
 }
 

@@ -1,6 +1,8 @@
 import type { Plant, PlantKind, SceneDefinition, SceneKind } from "../types";
 import { sceneMeta } from "../data";
 
+export const GRASSLAND_TARGET_DENSITY = 4.5;
+
 function mulberry32(seed: number): () => number {
   let value = seed >>> 0;
   return () => {
@@ -48,33 +50,6 @@ function coveredPoint(
   return clusteredPoint(random, width, height, centers);
 }
 
-function evenlyCoveredPoint(
-  random: () => number,
-  width: number,
-  height: number,
-  index: number,
-  plantsPerSquareMeter: number,
-): { x: number; y: number } {
-  const fivePointPattern = [
-    { x: .2, y: .2 },
-    { x: .8, y: .2 },
-    { x: .5, y: .5 },
-    { x: .2, y: .8 },
-    { x: .8, y: .8 },
-  ];
-  const cellsWide = Math.floor(width);
-  const cellIndex = Math.floor(index / plantsPerSquareMeter);
-  const column = cellIndex % cellsWide;
-  const row = Math.floor(cellIndex / cellsWide) % Math.floor(height);
-  const patternPoint = fivePointPattern[index % fivePointPattern.length] ?? { x: .5, y: .5 };
-  const xOffset = Math.min(.92, Math.max(.08, patternPoint.x + (random() - .5) * .36));
-  const yOffset = Math.min(.92, Math.max(.08, patternPoint.y + (random() - .5) * .36));
-  return {
-    x: column + xOffset,
-    y: row + yOffset,
-  };
-}
-
 function scatteredPoint(random: () => number, width: number, height: number): { x: number; y: number } {
   return {
     x: .18 + random() * (width - .36),
@@ -89,9 +64,10 @@ function createGrassland(seed: number): SceneDefinition {
     { x: 8, y: 8, spread: 18 }, { x: 25, y: 18, spread: 22 }, { x: 44, y: 10, spread: 18 },
     { x: 12, y: 38, spread: 20 }, { x: 33, y: 34, spread: 22 }, { x: 45, y: 44, spread: 16 },
   ];
-  const targetCount = 50 * 50 * 5;
+  // 位置在生成场景时一次确定，框选只统计、不补植株。
+  const targetCount = 50 * 50 * GRASSLAND_TARGET_DENSITY;
   for (let i = 0; i < targetCount; i++) {
-    const point = evenlyCoveredPoint(random, 50, 50, i, 5);
+    const point = scatteredPoint(random, 50, 50);
     plants.push(plant(`artemisia-${i}`, "artemisia", point.x, point.y, random, 0.42));
   }
   for (let i = 0; i < 4200; i++) {
@@ -117,19 +93,19 @@ function createGrassland(seed: number): SceneDefinition {
 function createGreenbelt(seed: number): SceneDefinition {
   const random = mulberry32(seed);
   const plants: Plant[] = [];
-  const irisRows = 2;
+  const irisRowPositions = [.36, 1, 1.64] as const;
   const irisColumns = 16;
-  for (let row = 0; row < irisRows; row++) {
+  for (let row = 0; row < irisRowPositions.length; row++) {
     for (let column = 0; column < irisColumns; column++) {
-      const stagger = row === 0 ? 0 : .34;
+      const stagger = row % 2 === 0 ? 0 : .34;
       const x = Math.min(19.65, Math.max(.35, (column + .45 + stagger) / irisColumns * 20 + (random() - .5) * .18));
-      const y = (row === 0 ? .42 : 1.78) + (random() - .5) * .08;
+      const y = irisRowPositions[row]! + (random() - .5) * .08;
       plants.push(plant(`iris-${row}-${column}`, "iris", x, y, random, 0.58));
     }
   }
   const dandelionCount = 20 * 2 * 5;
   for (let i = 0; i < dandelionCount; i++) {
-    const point = evenlyCoveredPoint(random, 20, 2, i, 5);
+    const point = scatteredPoint(random, 20, 2);
     plants.push(plant(`dandelion-${i}`, "dandelion", point.x, point.y, random, 0.4));
   }
   for (let i = 0; i < 120; i++) {

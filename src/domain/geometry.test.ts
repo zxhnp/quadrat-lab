@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fivePointQuadrats, hasOverlap, isInsideQuadrat, snappedEquidistantQuadrat } from "./geometry";
+import { FIVE_POINT_CENTER_DISTANCE, fivePointQuadrats, hasOverlap, isInsideQuadrat, normalizeQuadrat, snappedEquidistantQuadrat } from "./geometry";
 import { generateScene } from "./generator";
 import type { Plant, Quadrat } from "../types";
 
@@ -7,11 +7,15 @@ describe("样方几何规则", () => {
   const scene = generateScene("grassland", 1234);
   const center: Quadrat = { id: "center", index: 1, x: 24.5, y: 24.5, size: 1 };
 
-  it("五点法会生成中心和四角五个样方", () => {
+  it("五点法会生成中心和中心距两米的四角样方", () => {
     const points = fivePointQuadrats(center, scene);
     expect(points).toHaveLength(5);
     expect(points[0]?.x).toBeCloseTo(center.x);
     expect(points[0]?.y).toBeCloseTo(center.y);
+    for (const corner of points.slice(1)) {
+      const distance = Math.hypot(corner.x - center.x, corner.y - center.y);
+      expect(distance).toBeCloseTo(FIVE_POINT_CENTER_DISTANCE);
+    }
   });
 
   it("样方重叠时被拒绝", () => {
@@ -39,5 +43,15 @@ describe("样方几何规则", () => {
     const belt = generateScene("greenbelt", 5678);
     const first: Quadrat = { id: "first", index: 1, x: 3, y: 0.5, size: 1 };
     expect(snappedEquidistantQuadrat({ x: 19.5, y: 1 }, first, 8.9, belt)).toBeNull();
+  });
+
+  it("草原和绿化带都使用真实的一米样方", () => {
+    const grasslandQuadrat = normalizeQuadrat({ x: 25, y: 25 }, scene);
+    const greenbeltQuadrat = normalizeQuadrat({ x: 10, y: 1 }, generateScene("greenbelt", 5678));
+
+    expect(grasslandQuadrat.size).toBe(1);
+    expect(grasslandQuadrat.x).toBe(24.5);
+    expect(grasslandQuadrat.y).toBe(24.5);
+    expect(greenbeltQuadrat.size).toBe(1);
   });
 });

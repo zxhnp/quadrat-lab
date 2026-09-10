@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, shallowRef, useTemplateRef, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, shallowRef, useTemplateRef, watch } from "vue";
 import artemisiaImage from "../assets/plants/render/artemisia.webp";
 import dandelionImage from "../assets/plants/render/dandelion.webp";
 import foxtailImage from "../assets/plants/render/foxtail.webp";
 import groundcoverImage from "../assets/plants/render/groundcover.webp";
 import irisImage from "../assets/plants/render/iris.webp";
-import type { Plant, PlantKind, Quadrat, SceneDefinition, SceneKind } from "../types";
+import type { Plant, PlantKind, SceneDefinition, SceneKind } from "../types";
 
 interface PlantRenderStyle {
   scale: number;
@@ -36,40 +36,33 @@ const scenePlantKinds: Record<SceneKind, readonly PlantKind[]> = {
 
 const visibleCaps: Record<SceneKind, Record<PlantKind, number>> = {
   grassland: { artemisia: 240, foxtail: 110, groundcover: 90, dandelion: 0, iris: 0 },
-  greenbelt: { artemisia: 0, groundcover: 0, dandelion: 80, foxtail: 50, iris: 32 },
+  greenbelt: { artemisia: 0, groundcover: 0, dandelion: 80, foxtail: 50, iris: 48 },
 };
 
 const props = defineProps<{
   scene: SceneDefinition;
-  selectedQuadrat: Quadrat | null;
-  counted: boolean;
   displayScale: number;
 }>();
 
 const canvasRef = useTemplateRef<HTMLCanvasElement>("canvas");
 const refreshing = shallowRef(false);
+const targetPlantCount = computed(() => props.scene.plants.filter((plant) => plant.kind === props.scene.targetPlant).length);
+// 缩放超过 200% 后仅缓和增大植物符号，坐标仍按真实场景比例缩放。
+const symbolScreenScale = computed(() => props.scene.kind === "grassland" && props.displayScale > 2
+  ? 2 + (props.displayScale - 2) * .2
+  : props.displayScale);
+const symbolWorldScale = computed(() => symbolScreenScale.value / props.displayScale);
 const imageCache = new Map<PlantKind, HTMLImageElement>();
 let resizeObserver: ResizeObserver | null = null;
 let mounted = false;
 let imageLoadVersion = 0;
 let overviewPlants: Plant[] = [];
-let visiblePlantSet = new Set<Plant>();
 const renderedPlants = shallowRef<Plant[]>([]);
-const zoomPlants = shallowRef<Plant[]>([]);
 
 function mapPoint(plant: Pick<Plant, "x" | "y">, sceneKind = props.scene.kind) {
   if (sceneKind === "grassland") return { x: plant.x / 50 * 760, y: plant.y / 50 * 760 };
   // 绿化带逻辑坐标完整映射到上下边界之间的裸土。
   return { x: 32 + plant.x / 20 * 1136, y: 245 + plant.y / 2 * 220 };
-}
-
-function isSelectedTarget(plant: { kind: PlantKind; x: number; y: number }): boolean {
-  return isInsideSelectedTarget(plant);
-}
-
-function isInsideSelectedTarget(plant: { kind: PlantKind; x: number; y: number }): boolean {
-  const quadrat = props.selectedQuadrat;
-  return Boolean(quadrat && plant.kind === props.scene.targetPlant && plant.x >= quadrat.x && plant.x < quadrat.x + quadrat.size && plant.y >= quadrat.y && plant.y < quadrat.y + quadrat.size);
 }
 
 function refreshOverviewPlants(): void {
@@ -81,7 +74,10 @@ function refreshOverviewPlants(): void {
   overviewPlants = [];
   for (const kind of scenePlantKinds[sceneKind]) {
     const plants = buckets.get(kind) ?? [];
-    const cap = Math.min(plants.length, visibleCaps[sceneKind][kind]);
+    // 目标植物必须完整绘制，确保框选前后的视觉数量与统计数据来自同一份分布。
+    const cap = kind === props.scene.targetPlant
+      ? plants.length
+      : Math.min(plants.length, visibleCaps[sceneKind][kind]);
     if (cap === plants.length) overviewPlants.push(...plants);
     else {
       const step = plants.length / cap;
@@ -89,40 +85,15 @@ function refreshOverviewPlants(): void {
     }
   }
   overviewPlants.sort((first, second) => mapPoint(first, sceneKind).y - mapPoint(second, sceneKind).y);
-  visiblePlantSet = new Set(overviewPlants);
-  refreshRenderedPlants();
+  renderedPlants.value = overviewPlants;
 }
 
-function refreshRenderedPlants(): void {
-  const focus = props.selectedQuadrat
-    ? { x: props.selectedQuadrat.x + .5, y: props.selectedQuadrat.y + .5 }
-    : { x: props.scene.widthMeters / 2, y: props.scene.heightMeters / 2 };
-  const margin = props.scene.kind === "grassland" && props.displayScale > 1 ? 2.7 : 0;
-  const nearbyPlants = margin
-    ? props.scene.plants.filter((plant) => Math.abs(plant.x - focus.x) <= margin && Math.abs(plant.y - focus.y) <= margin)
-    : [];
-  zoomPlants.value = nearbyPlants.sort((first, second) => mapPoint(first).y - mapPoint(second).y);
-  const selectedPlants = nearbyPlants.filter((plant) => !visiblePlantSet.has(plant));
-  renderedPlants.value = [...overviewPlants, ...selectedPlants]
-    .sort((first, second) => mapPoint(first).y - mapPoint(second).y);
-}
-
-function domPlantStyle(plant: Plant) {
-  const point = mapPoint(plant);
+function plantMetrics(plant: Plant): { height: number; width: number } {
   const style = plantStyles[plant.kind];
-  const sceneScale = props.scene.kind === "grassland" ? .68 : .7;
+  const sceneScale = props.scene.kind === "grassland" ? .38 : .58;
   const irisScale = props.scene.kind === "greenbelt" && plant.kind === "iris" ? .82 : 1;
-  const height = plant.size * style.scale * sceneScale * irisScale * 4.2;
-  const width = height * style.aspect;
-  const viewBoxWidth = props.scene.kind === "grassland" ? 760 : 1200;
-  const viewBoxHeight = props.scene.kind === "grassland" ? 760 : 700;
-  return {
-    left: `${point.x / viewBoxWidth * 100}%`,
-    top: `${point.y / viewBoxHeight * 100}%`,
-    width: `${width}px`,
-    height: `${height}px`,
-    transform: `translate(-50%, -100%) scale(${1 / Math.max(1, props.displayScale)}) rotate(${plant.angle}deg)`,
-  };
+  const height = plant.size * style.scale * sceneScale * irisScale * symbolWorldScale.value;
+  return { height, width: height * style.aspect };
 }
 
 function draw(): void {
@@ -131,8 +102,7 @@ function draw(): void {
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
   if (!width || !height) return;
-  const sceneScale = Number.parseFloat(getComputedStyle(canvas).getPropertyValue("--scene-display-scale")) || 1;
-  const ratio = Math.min((window.devicePixelRatio || 1) * Math.min(sceneScale, 3), 4);
+  const ratio = Math.min((window.devicePixelRatio || 1) * Math.min(props.displayScale, 4), 4);
   canvas.width = Math.round(width * ratio);
   canvas.height = Math.round(height * ratio);
   const context = canvas.getContext("2d");
@@ -161,17 +131,12 @@ function draw(): void {
     if (!image) continue;
     const point = mapPoint(plant);
     const style = plantStyles[plant.kind];
-    const sceneScale = props.scene.kind === "grassland" ? .68 : .7;
-    const irisScale = props.scene.kind === "greenbelt" && plant.kind === "iris" ? .82 : 1;
-    const zoomSizeCompensation = props.scene.kind === "grassland" ? Math.pow(Math.max(1, props.displayScale), .75) : 1;
-    const height = plant.size * style.scale * sceneScale * irisScale / zoomSizeCompensation;
-    const width = height * style.aspect;
+    const { height, width } = plantMetrics(plant);
     const sourceHeight = image.naturalHeight * (1 - style.cropBottom);
-    const selected = isSelectedTarget(plant);
     context.save();
     context.translate(point.x, point.y);
     context.rotate(plant.angle * Math.PI / 180);
-    context.globalAlpha = selected ? 1 : .98;
+    context.globalAlpha = .98;
     context.fillStyle = "rgba(17, 49, 24, .28)";
     context.beginPath();
     context.ellipse(0, 0, Math.max(2, width * .3), Math.max(1, height * .055), 0, 0, Math.PI * 2);
@@ -206,10 +171,7 @@ watch(() => props.scene, (nextScene) => {
   void loadSceneImages(nextScene.kind);
 });
 
-watch(() => [props.selectedQuadrat, props.counted, props.displayScale], () => {
-  refreshRenderedPlants();
-  draw();
-});
+watch(() => props.displayScale, draw);
 
 onMounted(() => {
   mounted = true;
@@ -229,15 +191,18 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <canvas ref="canvas" v-show="displayScale === 1" class="distribution-layer" :class="{ refreshing }" aria-hidden="true" />
-  <div v-if="displayScale > 1" class="zoom-plant-layer" aria-hidden="true">
-    <img v-for="plant in zoomPlants" :key="plant.id" :src="plantAssets[plant.kind]" alt="" :style="domPlantStyle(plant)" />
-  </div>
+  <canvas
+    ref="canvas"
+    class="distribution-layer"
+    :class="{ refreshing }"
+    :data-rendered-plant-count="renderedPlants.length"
+    :data-rendered-target-count="targetPlantCount"
+    :data-plant-symbol-screen-scale="symbolScreenScale"
+    aria-hidden="true"
+  />
 </template>
 
 <style scoped>
 .distribution-layer { position: absolute; inset: 0; display: block; width: 100%; height: 100%; pointer-events: none; opacity: 1; filter: saturate(1.08) contrast(1.04); transition: opacity 130ms ease, filter 130ms ease; }
 .distribution-layer.refreshing { opacity: .2; filter: saturate(.82); }
-.zoom-plant-layer { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
-.zoom-plant-layer img { position: absolute; display: block; max-width: none; object-fit: contain; object-position: center bottom; transform-origin: 50% 100%; filter: saturate(1.08) contrast(1.04) drop-shadow(0 2px 2px rgba(18, 48, 28, .28)); }
 </style>

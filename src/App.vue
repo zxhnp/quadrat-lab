@@ -22,7 +22,6 @@ import SceneCanvas from "./components/SceneCanvas.vue";
 import { plantMeta, sceneMeta } from "./data";
 import { actualCounts, compareWithActual, summarizeQuadrats } from "./domain/calculator";
 import {
-  QUADRAT_SIZE,
   clamp,
   fivePointQuadrats,
   hasOverlap,
@@ -34,11 +33,12 @@ import { generateScene } from "./domain/generator";
 import type { CanvasTool, ComparisonResult, PlantKind, Point, Quadrat, SamplingMode, SceneDefinition, SceneKind, SamplingSummary } from "./types";
 
 const sceneKind = ref<SceneKind>("grassland");
-const scene = ref<SceneDefinition>(generateScene(sceneKind.value));
+let sceneSeed = Date.now();
+const scene = ref<SceneDefinition>(generateScene(sceneKind.value, sceneSeed));
 const quadrats = ref<Quadrat[]>([]);
 const selectedQuadratId = ref<string | null>(null);
+const selectedQuadratIds = ref<string[]>([]);
 const guideVisible = ref(false);
-const counted = ref(false);
 const averageReady = ref(false);
 const revealed = ref(false);
 const spacing = ref<number | null>(null);
@@ -52,10 +52,10 @@ const meta = computed(() => sceneMeta[sceneKind.value]);
 const summaries = computed<SamplingSummary[]>(() => summarizeQuadrats(scene.value, quadrats.value));
 const comparison = computed<ComparisonResult>(() => compareWithActual(scene.value, summaries.value));
 const selectedSummary = computed(() => summaries.value.find((item) => item.quadratId === selectedQuadratId.value) ?? null);
+const selectedQuadratIdSet = computed(() => new Set(selectedQuadratIds.value));
 const actualCountMap = computed(() => actualCounts(scene.value));
 const specimenKinds = computed<PlantKind[]>(() => sceneKind.value === "grassland" ? ["artemisia", "foxtail", "groundcover"] : ["dandelion", "iris", "foxtail"]);
-const canCalculate = computed(() => quadrats.value.length > 0);
-const canAverage = computed(() => counted.value && summaries.value.length > 0);
+const canAverage = computed(() => summaries.value.length > 0);
 const isStandardGrassland = computed(() => sceneKind.value === "grassland" && guideVisible.value && quadrats.value.length === 5);
 const currentDensityText = computed(() => averageReady.value ? `${comparison.value.estimatedDensity.toFixed(2)} 株/m²` : "待计算");
 const formulaText = computed(() => {
@@ -63,10 +63,9 @@ const formulaText = computed(() => {
   const values = summaries.value.map((item) => item.density.toFixed(2)).join(" + ");
   return `(${values}) ÷ ${summaries.value.length} = ${comparison.value.estimatedDensity.toFixed(2)} 株/m²`;
 });
-const activeStep = computed(() => averageReady.value ? 4 : counted.value ? 4 : quadrats.value.length ? 3 : 2);
+const activeStep = computed(() => averageReady.value ? 4 : quadrats.value.length ? 3 : 2);
 const stepLabel = computed(() => {
   if (averageReady.value) return "第 4 步 · 对比结果";
-  if (counted.value) return "第 4 步 · 计算密度";
   if (quadrats.value.length) return "第 3 步 · 继续取样";
   return "第 2 步 · 选择样方";
 });
@@ -75,13 +74,19 @@ function formatNumber(value: number): string {
   return value.toLocaleString("zh-CN");
 }
 
-function resetSession(kind: SceneKind = sceneKind.value, nextSeed = Date.now()): void {
+function nextSceneSeed(): number {
+  sceneSeed = Math.max(Date.now(), sceneSeed + 1);
+  return sceneSeed;
+}
+
+function resetSession(kind: SceneKind = sceneKind.value, nextSeed = nextSceneSeed()): void {
+  sceneSeed = nextSeed;
   sceneKind.value = kind;
   scene.value = generateScene(kind, nextSeed);
   quadrats.value = [];
   selectedQuadratId.value = null;
+  selectedQuadratIds.value = [];
   guideVisible.value = false;
-  counted.value = false;
   averageReady.value = false;
   revealed.value = false;
   spacing.value = null;
@@ -100,7 +105,8 @@ function startSampling(): void {
   activeMode.value = sceneKind.value === "grassland" ? "free" : "equidistant";
   activeCanvasTool.value = "select";
   errorMessage.value = "";
-  ElMessage({ message: sceneKind.value === "grassland" ? "请在草原中拖动框选 1m × 1m 中心样方" : "请在绿化带中拖动框选第一个 1m × 1m 样方", type: "success" });
+  if (sceneKind.value === "grassland") sceneCanvasRef.value?.focusSamplingZoom();
+  ElMessage({ message: sceneKind.value === "grassland" ? "已放大到 400%，请拖动框选真实 1m × 1m 中心样方" : "请在绿化带中拖动框选第一个 1m × 1m 样方", type: "success" });
 }
 
 function setCanvasTool(tool: CanvasTool): void {
@@ -116,10 +122,6 @@ function zoomOut(): void {
   sceneCanvasRef.value?.zoomOut();
 }
 
-function resetZoom(): void {
-  sceneCanvasRef.value?.resetZoom();
-}
-
 function handleGuideTool(): void {
   if (sceneKind.value === "greenbelt") fillGreenbelt();
   else toggleGuide();
@@ -131,7 +133,7 @@ function createQuadrat(point: Point, source?: Quadrat): Quadrat {
     ...raw,
     id: `quadrat-${Date.now()}-${quadrats.value.length + 1}`,
     index: quadrats.value.length + 1,
-    size: QUADRAT_SIZE,
+    size: raw.size,
   };
 }
 
@@ -196,13 +198,28 @@ function handleCanvasClick(point: Point): void {
   const next = createQuadrat(point, candidate);
   quadrats.value.push(next);
   selectedQuadratId.value = next.id;
-  counted.value = false;
+  selectedQuadratIds.value = [next.id];
   averageReady.value = false;
   revealed.value = false;
 }
 
 function selectQuadrat(id: string): void {
   selectedQuadratId.value = id;
+  selectedQuadratIds.value = [id];
+}
+
+function selectAllQuadrats(): void {
+  if (!quadrats.value.length) return;
+  const ids = quadrats.value.map((quadrat) => quadrat.id);
+  selectedQuadratIds.value = ids;
+  if (!selectedQuadratId.value || !ids.includes(selectedQuadratId.value)) selectedQuadratId.value = ids[0] ?? null;
+  activeCanvasTool.value = "cursor";
+}
+
+function clearQuadratSelection(): void {
+  selectedQuadratId.value = null;
+  selectedQuadratIds.value = [];
+  activeCanvasTool.value = "cursor";
 }
 
 function handleTableRowClick(row: SamplingSummary): void {
@@ -234,31 +251,19 @@ function fillGreenbelt(): void {
   const added: Quadrat[] = [];
   for (let step = -20; step <= 20; step += 1) {
     const center = firstCenter + step * spacing.value;
-    if (center < 0.5 || center > scene.value.widthMeters - 0.5) continue;
-    const candidate: Quadrat = { id: `fill-${step}`, index: 0, x: center - 0.5, y: first.y, size: QUADRAT_SIZE };
+    if (center < first.size / 2 || center > scene.value.widthMeters - first.size / 2) continue;
+    const candidate: Quadrat = { id: `fill-${step}`, index: 0, x: center - first.size / 2, y: first.y, size: first.size };
     if (!hasOverlap(candidate, quadrats.value) && !hasOverlap(candidate, added)) added.push(candidate);
   }
   quadrats.value = [...quadrats.value, ...added].sort((a, b) => a.x - b.x).map((item, index) => ({ ...item, index: index + 1 }));
-  counted.value = false;
   averageReady.value = false;
   revealed.value = false;
   ElMessage({ message: `已按 ${spacing.value.toFixed(1)}m 间距铺满绿化带`, type: "success" });
 }
 
-function calculateDensity(): void {
-  if (!canCalculate.value) {
-    setError("至少选择一个样方后才能计算种群密度");
-    return;
-  }
-  counted.value = true;
-  averageReady.value = false;
-  revealed.value = false;
-  ElMessage({ message: "已高亮目标植物并完成样方统计", type: "success" });
-}
-
 function calculateAverage(): void {
   if (!canAverage.value) {
-    setError("请先点击“标记并计数”完成样方统计");
+    setError("请先选取至少一个样方");
     return;
   }
   averageReady.value = true;
@@ -281,7 +286,7 @@ function undo(): void {
   }
   quadrats.value = previous.map((item) => ({ ...item }));
   selectedQuadratId.value = quadrats.value[quadrats.value.length - 1]?.id ?? null;
-  counted.value = false;
+  selectedQuadratIds.value = selectedQuadratId.value ? [selectedQuadratId.value] : [];
   averageReady.value = false;
   revealed.value = false;
 }
@@ -291,16 +296,17 @@ function clearQuadrats(): void {
   pushHistory();
   quadrats.value = [];
   selectedQuadratId.value = null;
+  selectedQuadratIds.value = [];
   guideVisible.value = false;
   spacing.value = null;
-  counted.value = false;
   averageReady.value = false;
   revealed.value = false;
 }
 
 function regenerate(): void {
-  resetSession(sceneKind.value, Date.now());
-  ElMessage({ message: "已生成新的植物分布", type: "success" });
+  sceneCanvasRef.value?.resetZoom();
+  resetSession(sceneKind.value);
+  ElMessage({ message: `已重置并生成新的${sceneMeta[sceneKind.value].label}植物分布`, type: "success" });
 }
 
 function showFivePointReference(): Quadrat[] {
@@ -332,8 +338,8 @@ function showFivePointReference(): Quadrat[] {
           <h2 class="panel-title">场景选择</h2>
 
           <section class="scene-switcher" aria-label="实验场景">
-            <button class="scene-tab" :class="{ active: sceneKind === 'grassland' }" type="button" @click="chooseScene('grassland')"><PlantSpecimen kind="groundcover" compact /><span>草原</span><small>50m × 50m</small></button>
-            <button class="scene-tab" :class="{ active: sceneKind === 'greenbelt' }" type="button" @click="chooseScene('greenbelt')"><PlantSpecimen kind="iris" compact /><span>绿化带</span><small>20m × 2m</small></button>
+            <button class="scene-tab" :class="{ active: sceneKind === 'grassland' }" type="button" @click="chooseScene('grassland')"><span>草原</span><small>50m × 50m</small></button>
+            <button class="scene-tab" :class="{ active: sceneKind === 'greenbelt' }" type="button" @click="chooseScene('greenbelt')"><span>绿化带</span><small>20m × 2m</small></button>
           </section>
 
           <section class="specimen-section">
@@ -354,30 +360,33 @@ function showFivePointReference(): Quadrat[] {
           :can-guide="sceneKind === 'grassland' ? quadrats.length > 0 : quadrats.length >= 2"
           :can-undo="history.length > 0"
           :can-clear="quadrats.length > 0"
+          :can-select-all="quadrats.length > 0 && selectedQuadratIds.length < quadrats.length"
+          :can-clear-selection="selectedQuadratIds.length > 0"
           @tool-change="setCanvasTool"
           @toggle-guide="handleGuideTool"
           @zoom-in="zoomIn"
           @zoom-out="zoomOut"
-          @reset-zoom="resetZoom"
+          @reset-scene="regenerate"
           @undo="undo"
           @clear="clearQuadrats"
+          @select-all="selectAllQuadrats"
+          @clear-selection="clearQuadratSelection"
         />
 
         <section class="map-panel" aria-label="交互画布">
-          <SceneCanvas ref="sceneCanvasRef" :scene="scene" :quadrats="quadrats" :selected-quadrat-id="selectedQuadratId" :guide-visible="guideVisible" :counted="counted" :active-tool="activeCanvasTool" @canvas-click="handleCanvasClick" @select-quadrat="selectQuadrat" />
+          <SceneCanvas ref="sceneCanvasRef" :scene="scene" :quadrats="quadrats" :selected-quadrat-id="selectedQuadratId" :selected-quadrat-ids="selectedQuadratIds" :guide-visible="guideVisible" :active-tool="activeCanvasTool" @canvas-click="handleCanvasClick" @select-quadrat="selectQuadrat" />
           <el-alert v-if="errorMessage" class="canvas-alert" :title="errorMessage" type="warning" :closable="false" show-icon><template #icon><el-icon><WarningFilled /></el-icon></template></el-alert>
         </section>
 
         <aside class="inspector-rail" aria-label="样方统计与估算">
           <div class="inspector-heading"><div><span class="eyebrow">{{ sceneKind === 'grassland' ? '当前样方' : '等距取样' }}</span><h2>统计与估算</h2></div><el-icon class="rail-icon"><Histogram /></el-icon></div>
 
-          <div v-if="selectedSummary" class="selected-sample"><div class="sample-heading"><span>样方 {{ selectedSummary.index }}</span><el-tag size="small" type="warning" effect="light">已选中</el-tag></div><div class="sample-focus"><div><strong>{{ selectedSummary.targetCount }}</strong><span>{{ plantMeta[meta.targetPlant].label }}个体</span></div><div><strong>{{ selectedSummary.density.toFixed(1) }}</strong><span>株/m²</span></div></div><div class="sample-meta"><span>样方面积</span><b>{{ selectedSummary.area }}m²</b><span>边界规则</span><b>计上不计下，计左不计右</b></div></div>
-          <div v-else class="inspector-empty"><el-icon><Operation /></el-icon><strong>还没有选择样方</strong><span>在中央场景中点击位置开始取样。</span></div>
-          <el-button class="inspector-primary" type="warning" :icon="Aim" :disabled="!selectedSummary" @click="calculateDensity">标记并计数</el-button>
+          <div v-if="selectedSummary" class="selected-sample"><div class="sample-heading"><span>样方 {{ selectedSummary.index }}</span><el-tag size="small" type="warning" effect="light">{{ selectedQuadratIds.length > 1 ? `已选 ${selectedQuadratIds.length} 个` : '已选中' }}</el-tag></div><div class="sample-focus"><div><strong>{{ selectedSummary.targetCount }}</strong><span>{{ plantMeta[meta.targetPlant].label }}个体</span></div><div><strong>{{ selectedSummary.density.toFixed(1) }}</strong><span>株/m²</span></div></div><div class="sample-meta"><span>面积 <b>{{ selectedSummary.area }}m²</b></span><span>边界 <b>计上不计下，计左不计右</b></span></div></div>
+          <div v-else class="inspector-empty"><el-icon><Operation /></el-icon><strong>{{ quadrats.length ? '当前未选择样方' : '还没有选择样方' }}</strong><span>{{ quadrats.length ? '点击画布中的样方查看统计。' : '在中央场景中点击位置开始取样。' }}</span></div>
 
-          <section class="sample-list-section"><div class="section-label-row"><span>样方记录</span><span class="section-note">{{ summaries.length }} / {{ sceneKind === 'grassland' ? 5 : '∞' }}</span></div><div v-if="summaries.length" class="sample-list"><button v-for="row in summaries" :key="row.quadratId" class="sample-row" :class="{ active: row.quadratId === selectedQuadratId }" type="button" @click="handleTableRowClick(row)"><span class="sample-number">{{ row.index }}</span><span class="sample-label">样方 {{ row.index }}</span><strong>{{ row.targetCount }} 株</strong><b>{{ row.density.toFixed(1) }}</b></button></div><div v-else class="sample-list-empty">完成取样后，样方数量与密度会显示在这里。</div></section>
+          <section class="sample-list-section"><div class="section-label-row"><span>样方记录</span><span class="section-note">{{ summaries.length }} / {{ sceneKind === 'grassland' ? 5 : '∞' }}</span></div><div v-if="summaries.length" class="sample-list"><button v-for="row in summaries" :key="row.quadratId" class="sample-row" :class="{ active: selectedQuadratIdSet.has(row.quadratId) }" :data-quadrat-id="row.quadratId" type="button" @click="handleTableRowClick(row)"><span class="sample-number">{{ row.index }}</span><span class="sample-label">样方 {{ row.index }}</span><strong>{{ row.targetCount }} 株</strong><b>{{ row.density.toFixed(1) }}</b></button></div><div v-else class="sample-list-empty">完成取样后，样方数量与密度会显示在这里。</div></section>
 
-          <section class="estimate-card" :class="{ ready: averageReady }"><div class="estimate-title"><span>平均种群密度</span><el-tag v-if="isStandardGrassland" size="small" type="success" effect="light">规范取样</el-tag></div><strong>{{ currentDensityText }}</strong><p>{{ counted ? formulaText : '完成样方统计后生成计算过程' }}</p></section>
+          <section class="estimate-card" :class="{ ready: averageReady }"><div class="estimate-title"><span>平均种群密度</span><el-tag v-if="isStandardGrassland" size="small" type="success" effect="light">规范取样</el-tag></div><strong>{{ currentDensityText }}</strong><p>{{ averageReady ? formulaText : summaries.length ? '样方密度已自动统计，点击下方计算平均值' : '完成取样后生成计算过程' }}</p></section>
           <div class="inspector-actions"><el-button class="wide-button" :disabled="!canAverage" :icon="CircleCheck" @click="calculateAverage">计算平均值</el-button><el-button class="wide-button outline-button" :disabled="!averageReady" :icon="View" @click="revealActual">揭晓真实结果</el-button></div>
 
           <div v-if="revealed" class="comparison-card"><div class="comparison-title"><span>真实值对比</span><el-tag size="small" type="warning">误差 {{ comparison.errorPercent.toFixed(1) }}%</el-tag></div><div class="comparison-line"><span>实际密度</span><strong>{{ comparison.actualDensity.toFixed(2) }} 株/m²</strong></div><div class="comparison-line"><span>样方法估算</span><strong>{{ comparison.estimatedDensity.toFixed(2) }} 株/m²</strong></div><div class="actual-counts"><div v-for="kind in specimenKinds" :key="kind"><span>{{ plantMeta[kind].label }}</span><b>{{ formatNumber(actualCountMap[kind]) }} 株</b></div></div></div>
