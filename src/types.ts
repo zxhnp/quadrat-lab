@@ -11,6 +11,8 @@ export type SamplingMode = "free" | "fivePoint" | "equidistant";
 
 export type CanvasTool = "cursor" | "select" | "pan";
 
+export type QuadratSize = 1 | 4;
+
 export interface Plant {
   id: string;
   kind: PlantKind;
@@ -36,7 +38,7 @@ export interface Quadrat {
   index: number;
   x: number;
   y: number;
-  size: number;
+  size: QuadratSize;
 }
 
 export interface SamplingSummary {

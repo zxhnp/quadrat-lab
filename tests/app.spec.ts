@@ -12,9 +12,26 @@ async function dragSample(page: Page, canvas: Locator, xRatio: number, yRatio: n
 }
 
 test("样方实验主流程可加载并切换场景", async ({ page }) => {
+  await page.setViewportSize({ width: 1646, height: 912 });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "样方实验" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /选取样方.*1m × 1m/ })).toBeVisible();
+  const quadratButton = page.getByRole("button", { name: /选取样方.*1m × 1m/ });
+  const quadratMenu = page.getByRole("button", { name: "样方尺寸菜单" });
+  const selectionMenu = page.getByRole("button", { name: "样方选择菜单" });
+  await expect(quadratButton).toBeVisible();
+  await expect(quadratMenu).toBeVisible();
+  await expect(selectionMenu).toBeVisible();
+  const detailBounds = await quadratButton.locator("small").boundingBox();
+  const menuBounds = await quadratMenu.boundingBox();
+  if (!detailBounds || !menuBounds) throw new Error("未找到样方尺寸文字或菜单箭头");
+  expect(menuBounds.y + menuBounds.height).toBeLessThanOrEqual(detailBounds.y);
+  const menuTopOffsets = await page.locator(".toolbar-selection-menu").evaluateAll((elements) => elements.map((element) => {
+    const menuBounds = element.getBoundingClientRect();
+    const itemBounds = element.closest(".toolbar-item")?.getBoundingClientRect();
+    return itemBounds ? menuBounds.top - itemBounds.top : Number.NaN;
+  }));
+  expect(menuTopOffsets).toHaveLength(2);
+  expect(menuTopOffsets.every((offset) => Math.abs(offset - 4) < .5)).toBe(true);
   await expect(page.getByRole("button", { name: /草地 30m × 30m/ })).toBeVisible();
   await page.getByRole("button", { name: /绿化带 10m × 2m/ }).click();
   await expect(page.getByAltText("绿化带场景底图")).toBeVisible();
@@ -23,8 +40,57 @@ test("样方实验主流程可加载并切换场景", async ({ page }) => {
   await expect(toolbar.getByRole("button", { name: "拖动画布" })).toHaveCount(0);
   await expect(toolbar.getByRole("button", { name: "放大", exact: true })).toHaveCount(0);
   await expect(toolbar.getByRole("button", { name: "缩小", exact: true })).toHaveCount(0);
+  await expect(toolbar.getByRole("button", { name: "样方尺寸菜单" })).toHaveCount(0);
+  await expect(toolbar.getByRole("button", { name: /选取样方.*1m × 1m/ })).toBeVisible();
   await expect(page.locator(".greenbelt-overlay")).toHaveCount(0);
   await expect(page.locator(".canvas-caption")).not.toContainText("等距 3m 辅助线");
+});
+
+test("草地四米样方使用两米角点间距", async ({ page }) => {
+  await page.goto("/");
+  const sizeMenu = page.getByRole("button", { name: "样方尺寸菜单" });
+
+  await sizeMenu.click();
+  await page.getByRole("menuitem", { name: "4m × 4m" }).click();
+  await expect(page.getByRole("button", { name: /选取样方.*4m × 4m/ })).toBeVisible();
+  await expect(page.locator(".zoom-hint")).toContainText("真实 4m × 4m 样方");
+  await expect(page.locator(".canvas-caption")).toContainText("角点间距 2m 的 X 辅助线");
+
+  await page.getByRole("button", { name: "进入取样模式" }).click();
+  const viewport = page.locator(".scene-viewport");
+  await dragSample(page, viewport, .5, .5, 20);
+
+  const quadrat = page.locator("svg .quadrats .quadrat rect").first();
+  expect(Number(await quadrat.getAttribute("width"))).toBeCloseTo(760 * 4 / 30, 5);
+  expect(Number(await quadrat.getAttribute("height"))).toBeCloseTo(760 * 4 / 30, 5);
+  await expect(page.locator(".sample-meta")).toContainText("16m²");
+  await expect(sizeMenu).toBeDisabled();
+
+  await page.getByRole("button", { name: "撤销" }).click();
+  await expect(page.locator(".sample-row")).toHaveCount(0);
+  await expect(sizeMenu).toBeEnabled();
+
+  await dragSample(page, viewport, .5, .5, 20);
+  await expect(sizeMenu).toBeDisabled();
+  await page.getByRole("button", { name: "辅助线" }).click();
+  const guides = page.locator(".five-point-guide rect");
+  await expect(guides).toHaveCount(5);
+  await expect(page.locator(".guide-connection line")).toHaveCount(4);
+  await page.getByRole("button", { name: "重置草地缩放" }).click();
+  await expect(page.getByRole("button", { name: "重置草地缩放" })).toHaveText("100%");
+
+  for (let index = 1; index < 5; index += 1) {
+    const guideBounds = await guides.nth(index).boundingBox();
+    if (!guideBounds) throw new Error(`未找到第 ${index + 1} 个四米辅助样方`);
+    await page.mouse.move(guideBounds.x + 2, guideBounds.y + 2);
+    await page.mouse.down();
+    await page.mouse.move(guideBounds.x + 22, guideBounds.y + 22, { steps: 4 });
+    await page.mouse.up();
+  }
+  await expect(page.locator(".sample-row")).toHaveCount(5);
+
+  await page.getByRole("button", { name: "清空" }).click();
+  await expect(sizeMenu).toBeEnabled();
 });
 
 test("重叠样方只显示一次顶部消息", async ({ page }) => {
@@ -150,6 +216,27 @@ test("草地辅助线以开启时选中的样方为中心，后续选取时不�
   expect(guideGeometryAfterSelecting).toEqual(guideGeometryBefore);
 });
 
+test("草地中心样方靠近边界时拒绝开启五点辅助线", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "进入取样模式" }).click();
+  await page.getByRole("button", { name: "重置草地缩放" }).click();
+  const viewport = page.locator(".scene-viewport");
+  await dragSample(page, viewport, .5, .01, 14);
+  await expect(page.locator(".sample-row")).toHaveCount(1);
+
+  const selectedBefore = await page.locator(".quadrats .quadrat.selected rect").evaluate((element) => ({
+    x: element.getAttribute("x"),
+    y: element.getAttribute("y"),
+  }));
+  await page.getByRole("button", { name: "辅助线" }).click();
+
+  await expect(page.getByText("当前中心样方距离边界过近，无法完整布置 X 型五点样方，请重新选择靠内的位置")).toBeVisible();
+  await expect(page.locator(".five-point-guide rect")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "辅助线" })).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator(".quadrats .quadrat.selected rect")).toHaveAttribute("x", selectedBefore.x ?? "");
+  await expect(page.locator(".quadrats .quadrat.selected rect")).toHaveAttribute("y", selectedBefore.y ?? "");
+});
+
 test("草地在二点五倍缩放下可框选真实一米样方", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "进入取样模式" }).click();
@@ -235,12 +322,12 @@ test("草地在二点五倍缩放下可框选真实一米样方", async ({ page 
   const centerGuide = guideGeometry[0];
   const cornerGuide = guideGeometry[1];
   if (!centerGuide || !cornerGuide) throw new Error("未找到五点取样辅助样方坐标");
-  const centerToCorner = Math.hypot(
-    cornerGuide.x - centerGuide.x,
-    cornerGuide.y - centerGuide.y,
+  const cornerGap = Math.hypot(
+    centerGuide.x - (cornerGuide.x + cornerGuide.width),
+    centerGuide.y - (cornerGuide.y + cornerGuide.width),
   );
-  expect(centerToCorner / centerGuide.width).toBeCloseTo(2, 5);
-  await expect(page.locator(".canvas-caption")).toContainText("中心距 2m 的 X 辅助线");
+  expect(cornerGap / centerGuide.width).toBeCloseTo(2, 5);
+  await expect(page.locator(".canvas-caption")).toContainText("角点间距 2m 的 X 辅助线");
 });
 
 test("草地五点样方的左侧两个密度标签在各比例下保持左置", async ({ page }) => {
@@ -314,6 +401,12 @@ test("右侧估算区使用紧凑公式并突出真实结果", async ({ page }) 
   await expect(comparisonCard.getByText("4,500 株")).toBeVisible();
   const densityMetrics = comparisonCard.locator(".comparison-metric");
   await expect(densityMetrics).toHaveCount(2);
+  const countFontWeights = await comparisonCard.locator(".actual-counts div").evaluateAll((elements) => elements.map((element) => ({
+    label: Number.parseInt(getComputedStyle(element.querySelector("span") as HTMLElement).fontWeight, 10),
+    value: Number.parseInt(getComputedStyle(element.querySelector("b") as HTMLElement).fontWeight, 10),
+  })));
+  expect(countFontWeights).toHaveLength(3);
+  expect(countFontWeights.every(({ label, value }) => label >= 700 && value >= 700)).toBe(true);
   const densityMetricBoxes = await densityMetrics.evaluateAll((elements) => elements.map((element) => {
     const bounds = element.getBoundingClientRect();
     const value = element.querySelector("strong");

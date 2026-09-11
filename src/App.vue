@@ -22,13 +22,15 @@ import { plantMeta, sceneMeta } from "./data";
 import { actualCounts, compareWithActual, summarizeQuadrats } from "./domain/calculator";
 import {
   clamp,
+  DEFAULT_QUADRAT_SIZE,
+  fivePointQuadrats,
   hasOverlap,
   nearestGuideQuadrat,
   normalizeQuadrat,
   snappedEquidistantQuadrat,
 } from "./domain/geometry";
 import { generateScene } from "./domain/generator";
-import type { CanvasTool, ComparisonResult, PlantKind, Point, Quadrat, SamplingMode, SceneDefinition, SceneKind, SamplingSummary } from "./types";
+import type { CanvasTool, ComparisonResult, PlantKind, Point, Quadrat, QuadratSize, SamplingMode, SceneDefinition, SceneKind, SamplingSummary } from "./types";
 
 const sceneKind = ref<SceneKind>("grassland");
 let sceneSeed = Date.now();
@@ -44,6 +46,7 @@ const spacing = ref<number | null>(null);
 const history = ref<Quadrat[][]>([]);
 const activeMode = ref<SamplingMode>("free");
 const activeCanvasTool = ref<CanvasTool>("select");
+const quadratSize = ref<QuadratSize>(DEFAULT_QUADRAT_SIZE);
 const sceneCanvasRef = ref<InstanceType<typeof SceneCanvas> | null>(null);
 
 const meta = computed(() => sceneMeta[sceneKind.value]);
@@ -56,6 +59,7 @@ const actualCountMap = computed(() => actualCounts(scene.value));
 const specimenKinds = computed<PlantKind[]>(() => sceneKind.value === "grassland" ? ["artemisia", "foxtail", "groundcover"] : ["dandelion", "iris", "foxtail"]);
 const canAverage = computed(() => summaries.value.length > 0);
 const isStandardGrassland = computed(() => sceneKind.value === "grassland" && guideVisible.value && quadrats.value.length === 5);
+const quadratSizeLabel = computed(() => `${quadratSize.value}m × ${quadratSize.value}m`);
 const currentDensityText = computed(() => averageReady.value ? `${comparison.value.estimatedDensity.toFixed(2)} 株/m²` : "待计算");
 const formulaText = computed(() => {
   if (!summaries.value.length) return "选择样方后生成计算公式";
@@ -93,6 +97,7 @@ function resetSession(kind: SceneKind = sceneKind.value, nextSeed = nextSceneSee
   history.value = [];
   activeMode.value = kind === "grassland" ? "free" : "equidistant";
   activeCanvasTool.value = "select";
+  quadratSize.value = DEFAULT_QUADRAT_SIZE;
 }
 
 function chooseScene(kind: SceneKind): void {
@@ -104,11 +109,17 @@ function startSampling(): void {
   activeMode.value = sceneKind.value === "grassland" ? "free" : "equidistant";
   activeCanvasTool.value = "select";
   if (sceneKind.value === "grassland") sceneCanvasRef.value?.focusSamplingZoom();
-  ElMessage({ message: sceneKind.value === "grassland" ? "已放大到 250%，请拖动框选真实 1m × 1m 中心样方" : "请在绿化带中拖动框选第一个 1m × 1m 样方", type: "success" });
+  ElMessage({ message: sceneKind.value === "grassland" ? `已放大到 250%，请拖动框选真实 ${quadratSizeLabel.value} 中心样方` : "请在绿化带中拖动框选第一个 1m × 1m 样方", type: "success" });
 }
 
 function setCanvasTool(tool: CanvasTool): void {
   activeCanvasTool.value = tool;
+}
+
+function setQuadratSize(size: QuadratSize): void {
+  if (sceneKind.value !== "grassland" || quadrats.value.length) return;
+  quadratSize.value = size;
+  activeCanvasTool.value = "select";
 }
 
 function zoomIn(): void {
@@ -125,7 +136,7 @@ function handleGuideTool(): void {
 }
 
 function createQuadrat(point: Point, source?: Quadrat): Quadrat {
-  const raw = source ?? normalizeQuadrat(point, scene.value);
+  const raw = source ?? normalizeQuadrat(point, scene.value, quadratSize.value);
   return {
     ...raw,
     id: `quadrat-${Date.now()}-${quadrats.value.length + 1}`,
@@ -160,7 +171,7 @@ function handleCanvasClick(point: Point): void {
   const first = quadrats.value[0];
   let candidate: Quadrat;
   if (scene.value.kind === "grassland" && guideVisible.value && guideAnchorQuadrat.value) {
-    candidate = nearestGuideQuadrat(point, guideAnchorQuadrat.value, scene.value) ?? normalizeQuadrat(point, scene.value);
+    candidate = nearestGuideQuadrat(point, guideAnchorQuadrat.value, scene.value) ?? normalizeQuadrat(point, scene.value, quadratSize.value);
   } else if (scene.value.kind === "greenbelt" && first && spacing.value) {
     const snapped = snappedEquidistantQuadrat(point, first, spacing.value, scene.value);
     if (!snapped) {
@@ -169,7 +180,7 @@ function handleCanvasClick(point: Point): void {
     }
     candidate = snapped;
   } else {
-    candidate = normalizeQuadrat(point, scene.value);
+    candidate = normalizeQuadrat(point, scene.value, quadratSize.value);
   }
 
   if (scene.value.kind === "greenbelt" && first && !spacing.value) {
@@ -241,7 +252,11 @@ function toggleGuide(): void {
     return;
   }
   const anchor = quadrats.value.find((item) => item.id === selectedQuadratId.value) ?? quadrats.value[0];
-  guideAnchorQuadratId.value = anchor?.id ?? null;
+  if (!anchor || fivePointQuadrats(anchor, scene.value).length !== 5) {
+    setError("当前中心样方距离边界过近，无法完整布置 X 型五点样方，请重新选择靠内的位置");
+    return;
+  }
+  guideAnchorQuadratId.value = anchor.id;
   guideVisible.value = true;
   activeMode.value = "fivePoint";
 }
@@ -372,7 +387,11 @@ function regenerate(): void {
           :can-select-all="quadrats.length > 0 && selectedQuadratIds.length < quadrats.length"
           :can-clear-selection="selectedQuadratIds.length > 0"
           :show-viewport-tools="sceneKind === 'grassland'"
+          :quadrat-size="quadratSize"
+          :show-quadrat-size-menu="sceneKind === 'grassland'"
+          :can-change-quadrat-size="quadrats.length === 0"
           @tool-change="setCanvasTool"
+          @quadrat-size-change="setQuadratSize"
           @toggle-guide="handleGuideTool"
           @zoom-in="zoomIn"
           @zoom-out="zoomOut"
@@ -384,7 +403,7 @@ function regenerate(): void {
         />
 
         <section class="map-panel" aria-label="交互画布">
-          <SceneCanvas ref="sceneCanvasRef" :scene="scene" :quadrats="quadrats" :selected-quadrat-id="selectedQuadratId" :selected-quadrat-ids="selectedQuadratIds" :guide-visible="guideVisible" :guide-anchor-quadrat-id="guideAnchorQuadratId" :active-tool="activeCanvasTool" @canvas-click="handleCanvasClick" @select-quadrat="selectQuadrat" />
+          <SceneCanvas ref="sceneCanvasRef" :scene="scene" :quadrats="quadrats" :selected-quadrat-id="selectedQuadratId" :selected-quadrat-ids="selectedQuadratIds" :guide-visible="guideVisible" :guide-anchor-quadrat-id="guideAnchorQuadratId" :active-tool="activeCanvasTool" :quadrat-size="quadratSize" @canvas-click="handleCanvasClick" @select-quadrat="selectQuadrat" />
         </section>
 
         <aside class="inspector-rail" aria-label="样方统计与估算">

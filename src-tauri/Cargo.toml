@@ -1,6 +1,6 @@
 [package]
 name = "quadrat-lab"
-version = "0.1.1"
+version = "0.1.2"
 description = "样方实验教学演示"
 authors = ["quadrat-lab"]
 license = "MIT"

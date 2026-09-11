@@ -4,9 +4,9 @@ import grasslandArtwork from "../assets/scenes/grassland-soil-bg.webp";
 import greenbeltArtwork from "../assets/scenes/greenbelt-soil-bg.webp";
 import { plantMeta } from "../data";
 import { countPlantsInQuadrat, plantsInQuadrat } from "../domain/calculator";
-import { FIVE_POINT_CENTER_DISTANCE, clamp, fivePointQuadrats, quadratSizeForScene } from "../domain/geometry";
+import { FIVE_POINT_CORNER_DISTANCE, clamp, fivePointQuadrats, quadratSizeForScene } from "../domain/geometry";
 import PlantDistributionLayer from "./PlantDistributionLayer.vue";
-import type { CanvasTool, Plant, PlantKind, Point, Quadrat, SceneDefinition, SceneKind } from "../types";
+import type { CanvasTool, Plant, PlantKind, Point, Quadrat, QuadratSize, SceneDefinition, SceneKind } from "../types";
 
 const sceneArtworks: Record<SceneKind, string> = {
   grassland: grasslandArtwork,
@@ -21,6 +21,7 @@ const props = defineProps<{
   guideVisible: boolean;
   guideAnchorQuadratId: string | null;
   activeTool: CanvasTool;
+  quadratSize: QuadratSize;
 }>();
 
 const emit = defineEmits<{
@@ -77,6 +78,7 @@ const stageStyle = computed(() => {
 });
 const zoomLabel = computed(() => `${Math.round(grasslandZoom.value * 100)}%`);
 const selectedQuadrat = computed(() => props.quadrats.find((item) => item.id === props.selectedQuadratId) ?? null);
+const guideAnchorQuadrat = computed(() => props.quadrats.find((item) => item.id === props.guideAnchorQuadratId) ?? null);
 const selectedQuadratIdSet = computed(() => new Set(props.selectedQuadratIds));
 const quadratTargetCounts = computed(() => new Map(props.quadrats.map((quadrat) => [
   quadrat.id,
@@ -128,17 +130,23 @@ function mapTargetMarkerPoint(plant: Plant, quadrat: Quadrat): Point {
 
 const guideQuadrats = computed(() => {
   if (props.scene.kind !== "grassland" || !props.guideVisible) return [];
-  const center = props.quadrats.find((item) => item.id === props.guideAnchorQuadratId);
-  return center ? fivePointQuadrats(center, props.scene) : [];
+  return guideAnchorQuadrat.value ? fivePointQuadrats(guideAnchorQuadrat.value, props.scene) : [];
 });
-const guideLinePath = computed(() => {
-  if (guideQuadrats.value.length !== 5) return "";
-  const points = guideQuadrats.value.map((quadrat) => mapPoint(quadrat.x + quadrat.size / 2, quadrat.y + quadrat.size / 2));
-  const tl = points[1]!;
-  const tr = points[2]!;
-  const bl = points[3]!;
-  const br = points[4]!;
-  return `M ${tl.x} ${tl.y} L ${br.x} ${br.y} M ${tr.x} ${tr.y} L ${bl.x} ${bl.y}`;
+const guideConnections = computed(() => {
+  const [center, topLeft, topRight, bottomLeft, bottomRight] = guideQuadrats.value;
+  if (!center || !topLeft || !topRight || !bottomLeft || !bottomRight) return [];
+
+  const centerRect = mapQuadrat(center);
+  const topLeftRect = mapQuadrat(topLeft);
+  const topRightRect = mapQuadrat(topRight);
+  const bottomLeftRect = mapQuadrat(bottomLeft);
+  const bottomRightRect = mapQuadrat(bottomRight);
+  return [
+    { id: "top-left", start: { x: centerRect.x, y: centerRect.y }, end: { x: topLeftRect.x + topLeftRect.width, y: topLeftRect.y + topLeftRect.height } },
+    { id: "top-right", start: { x: centerRect.x + centerRect.width, y: centerRect.y }, end: { x: topRightRect.x, y: topRightRect.y + topRightRect.height } },
+    { id: "bottom-left", start: { x: centerRect.x, y: centerRect.y + centerRect.height }, end: { x: bottomLeftRect.x + bottomLeftRect.width, y: bottomLeftRect.y } },
+    { id: "bottom-right", start: { x: centerRect.x + centerRect.width, y: centerRect.y + centerRect.height }, end: { x: bottomRightRect.x, y: bottomRightRect.y } },
+  ];
 });
 
 function mapQuadrat(quadrat: Quadrat) {
@@ -218,7 +226,7 @@ function eventToWorld(event: PointerEvent): Point | null {
 }
 
 function fixedQuadratFromDrag(start: Point, current: Point): Quadrat {
-  const size = quadratSizeForScene(props.scene);
+  const size = quadratSizeForScene(props.scene, props.quadratSize);
   const maxX = props.scene.widthMeters - size;
   const maxY = props.scene.heightMeters - size;
   const x = current.x < start.x ? start.x - size : start.x;
@@ -451,8 +459,10 @@ defineExpose({ zoomIn, zoomOut, resetZoom, focusSamplingZoom });
         <svg ref="svgRef" class="scene-canvas" :class="[`tool-${activeTool}`, { selecting: dragSelection, panning: panDrag }]" :viewBox="`0 0 ${viewBox.width} ${viewBox.height}`" preserveAspectRatio="none" role="img" :aria-label="`${scene.title}交互画布`" @pointerdown="handlePointerDown" @pointermove="handlePointerMove" @pointerup="handlePointerUp" @pointercancel="handlePointerCancel">
         <template v-if="scene.kind === 'grassland'">
           <g class="five-point-guide">
-            <path v-if="guideQuadrats.length" :d="guideLinePath" />
             <rect v-for="guide in guideQuadrats" :key="guide.id" v-bind="mapQuadrat(guide)" class="guide-quadrat" :class="{ 'guide-center': guide.index === 1 }" />
+            <g v-for="connection in guideConnections" :key="connection.id" class="guide-connection" aria-hidden="true">
+              <line :x1="connection.start.x" :y1="connection.start.y" :x2="connection.end.x" :y2="connection.end.y" />
+            </g>
           </g>
         </template>
 
@@ -480,8 +490,8 @@ defineExpose({ zoomIn, zoomOut, resetZoom, focusSamplingZoom });
       </div>
       </div>
     </div>
-    <div v-if="scene.kind === 'grassland'" class="zoom-hint">建议在 250% 下取样 · 拖动框选真实 1m × 1m 样方</div>
-    <div class="canvas-caption"><span><i class="dot target" />{{ plantMeta[scene.targetPlant].label }}为目标植物</span><span v-if="scene.kind === 'grassland'"><i class="dot guide" />中心距 {{ FIVE_POINT_CENTER_DISTANCE }}m 的 X 辅助线</span><span>点击样方可查看统计</span></div>
+    <div v-if="scene.kind === 'grassland'" class="zoom-hint">建议在 250% 下取样 · 拖动框选真实 {{ quadratSize }}m × {{ quadratSize }}m 样方</div>
+    <div class="canvas-caption"><span><i class="dot target" />{{ plantMeta[scene.targetPlant].label }}为目标植物</span><span v-if="scene.kind === 'grassland'"><i class="dot guide" />角点间距 {{ FIVE_POINT_CORNER_DISTANCE }}m 的 X 辅助线</span><span>点击样方可查看统计</span></div>
   </div>
 </template>
 
@@ -524,7 +534,7 @@ defineExpose({ zoomIn, zoomOut, resetZoom, focusSamplingZoom });
 .drag-selection text { fill: #fff; font-size: 14px; font-weight: 800; font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif; paint-order: stroke; stroke: rgba(23, 63, 45, .78); stroke-width: 4px; pointer-events: none; }
 .guide-quadrat { fill: rgba(255,255,255,.08); stroke: #fff; stroke-width: 2; stroke-dasharray: 7 5; vector-effect: non-scaling-stroke; }
 .guide-center { fill: rgba(215,154,61,.22); stroke: #f1a62d; stroke-width: 3; stroke-dasharray: none; }
-.five-point-guide path { fill: none; stroke: #fff; stroke-width: 2.6; stroke-dasharray: 8 7; opacity: .95; vector-effect: non-scaling-stroke; }
+.guide-connection line { stroke: #fff; stroke-width: 2.6; stroke-dasharray: 8 7; opacity: .95; vector-effect: non-scaling-stroke; }
 .canvas-caption { display: flex; justify-content: space-between; gap: 12px; padding: 4px 16px 0; color: #718178; font-size: 12px; flex: none; }
 .canvas-caption span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }

@@ -1,21 +1,20 @@
-import type { Point, Plant, Quadrat, SceneDefinition } from "../types";
+import type { Point, Plant, Quadrat, QuadratSize, SceneDefinition } from "../types";
 
-export const GRASSLAND_QUADRAT_SIZE = 1;
-export const GREENBELT_QUADRAT_SIZE = 1;
-export const FIVE_POINT_CENTER_DISTANCE = 2;
+export const DEFAULT_QUADRAT_SIZE: QuadratSize = 1;
+export const FIVE_POINT_CORNER_DISTANCE = 2;
 
 const FIVE_POINT_SNAP_DISTANCE = 0.75;
 
-export function quadratSizeForScene(scene: SceneDefinition): number {
-  return scene.kind === "grassland" ? GRASSLAND_QUADRAT_SIZE : GREENBELT_QUADRAT_SIZE;
+export function quadratSizeForScene(scene: SceneDefinition, requestedSize: QuadratSize = DEFAULT_QUADRAT_SIZE): QuadratSize {
+  return scene.kind === "grassland" ? requestedSize : DEFAULT_QUADRAT_SIZE;
 }
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-export function normalizeQuadrat(point: Point, scene: SceneDefinition): Quadrat {
-  const size = quadratSizeForScene(scene);
+export function normalizeQuadrat(point: Point, scene: SceneDefinition, requestedSize: QuadratSize = DEFAULT_QUADRAT_SIZE): Quadrat {
+  const size = quadratSizeForScene(scene, requestedSize);
   const y = scene.kind === "greenbelt"
     ? (scene.heightMeters - size) / 2
     : clamp(point.y - size / 2, 0, scene.heightMeters - size);
@@ -41,25 +40,31 @@ export function hasOverlap(candidate: Quadrat, existing: Quadrat[]): boolean {
 }
 
 export function fivePointQuadrats(center: Quadrat, scene: SceneDefinition): Quadrat[] {
-  const axisOffset = FIVE_POINT_CENTER_DISTANCE / Math.SQRT2;
   const size = center.size;
-  const centerPoint = { x: center.x + center.size / 2, y: center.y + center.size / 2 };
-  const safeX = clamp(centerPoint.x, axisOffset + size / 2, scene.widthMeters - axisOffset - size / 2);
-  const safeY = clamp(centerPoint.y, axisOffset + size / 2, scene.heightMeters - axisOffset - size / 2);
-  const points: Point[] = [
-    { x: safeX, y: safeY },
-    { x: safeX - axisOffset, y: safeY - axisOffset },
-    { x: safeX + axisOffset, y: safeY - axisOffset },
-    { x: safeX - axisOffset, y: safeY + axisOffset },
-    { x: safeX + axisOffset, y: safeY + axisOffset },
+  // 对角线上两个相对角点保持固定净距；轴向偏移包含一个样方边长。
+  const axisOffset = size + FIVE_POINT_CORNER_DISTANCE / Math.SQRT2;
+  const offsets: Point[] = [
+    { x: 0, y: 0 },
+    { x: -axisOffset, y: -axisOffset },
+    { x: axisOffset, y: -axisOffset },
+    { x: -axisOffset, y: axisOffset },
+    { x: axisOffset, y: axisOffset },
   ];
-  return points.map((point, index) => ({
+  const quadrats = offsets.map((offset, index) => ({
     id: `guide-${index + 1}`,
     index: index + 1,
-    x: clamp(point.x - size / 2, 0, scene.widthMeters - size),
-    y: clamp(point.y - size / 2, 0, scene.heightMeters - size),
+    x: center.x + offset.x,
+    y: center.y + offset.y,
     size,
   }));
+
+  const fitsScene = quadrats.every((quadrat) => (
+    quadrat.x >= 0
+    && quadrat.y >= 0
+    && quadrat.x + quadrat.size <= scene.widthMeters
+    && quadrat.y + quadrat.size <= scene.heightMeters
+  ));
+  return fitsScene ? quadrats : [];
 }
 
 export function nearestGuideQuadrat(point: Point, center: Quadrat, scene: SceneDefinition): Quadrat | null {

@@ -107,13 +107,15 @@ button { border: 0; }
 .toolbar-button:hover:not(:disabled) { background: rgba(255,255,255,.12); transform: translateY(-1px); }
 .toolbar-button.active { border-color: #f1b13d; background: linear-gradient(145deg, #ffd568, #f6b539); color: #173f2d; box-shadow: 0 7px 14px rgba(4,41,28,.2); }
 .toolbar-button:disabled { opacity: .38; cursor: not-allowed; }
-.toolbar-selection-menu { position: absolute !important; right: 4px; bottom: 4px; z-index: 2; line-height: 0; }
+.toolbar-selection-menu { position: absolute !important; top: 4px; right: 4px; z-index: 2; line-height: 0; }
 .toolbar-menu-trigger { width: 17px; height: 17px; padding: 0; border: 1px solid rgba(255,255,255,.22); border-radius: 5px; background: rgba(0,0,0,.18); color: #fff; display: grid; place-items: center; cursor: pointer; transition: background .16s ease, color .16s ease; }
 .toolbar-menu-trigger:hover { background: rgba(255,255,255,.2); }
 .toolbar-menu-trigger .el-icon { font-size: 8px; }
 .toolbar-button.active + .toolbar-selection-menu .toolbar-menu-trigger { border-color: rgba(23,63,45,.18); background: rgba(255,255,255,.5); color: #173f2d; }
-.quadrat-selection-dropdown .el-dropdown-menu { min-width: 118px; }
-.quadrat-selection-dropdown .el-dropdown-menu__item { font-size: 12px; font-weight: 700; }
+.quadrat-selection-dropdown .el-dropdown-menu,
+.quadrat-size-dropdown .el-dropdown-menu { min-width: 118px; }
+.quadrat-selection-dropdown .el-dropdown-menu__item,
+.quadrat-size-dropdown .el-dropdown-menu__item { font-size: 12px; font-weight: 700; }
 .toolbar-divider { height: 1px; margin: 2px 2px; background: rgba(255,255,255,.24); }
 
 .map-panel { position: relative; min-width: 0; min-height: 0; overflow: hidden; border-radius: 18px; background: #e3ebe4; box-shadow: var(--shadow); }
@@ -173,7 +175,7 @@ button { border: 0; }
 .comparison-estimate span { color: #9a6814; }
 .actual-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
 .actual-counts div { min-width: 0; min-height: 46px; padding: 6px 7px; display: grid; align-content: center; gap: 3px; border: 1px solid #e1e9e1; border-radius: 8px; background: rgba(255,255,255,.72); color: #65796c; font-size: 10px; }
-.actual-counts span, .actual-counts b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.actual-counts span, .actual-counts b { overflow: hidden; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
 .actual-counts b { color: var(--forest); font-size: 11px; }
 .actual-counts .target { border-color: #efd191; background: #fff0d1; color: #805916; font-weight: 800; }
 .actual-counts .target b { color: #a85f00; font-size: 13px; }
