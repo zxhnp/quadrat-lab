@@ -35,8 +35,8 @@ const scenePlantKinds: Record<SceneKind, readonly PlantKind[]> = {
 };
 
 const visibleCaps: Record<SceneKind, Record<PlantKind, number>> = {
-  grassland: { artemisia: 240, foxtail: 1500, groundcover: 1500, dandelion: 0, iris: 0 },
-  greenbelt: { artemisia: 0, groundcover: 0, dandelion: 200, foxtail: 80, iris: 150 },
+  grassland: { artemisia: 4500, foxtail: 540, groundcover: 540, dandelion: 0, iris: 0 },
+  greenbelt: { artemisia: 0, groundcover: 0, dandelion: 100, foxtail: 40, iris: 75 },
 };
 
 const props = defineProps<{
@@ -68,9 +68,14 @@ let overviewPlants: Plant[] = [];
 const renderedPlants = shallowRef<Plant[]>([]);
 
 function mapPoint(plant: Pick<Plant, "x" | "y">, sceneKind = props.scene.kind) {
-  if (sceneKind === "grassland") return { x: plant.x / 50 * 760, y: plant.y / 50 * 760 };
+  if (sceneKind === "grassland") {
+    return { x: plant.x / props.scene.widthMeters * 760, y: plant.y / props.scene.heightMeters * 760 };
+  }
   // 绿化带逻辑坐标完整映射到上下边界之间的裸土。
-  return { x: 32 + plant.x / 20 * 1136, y: 245 + plant.y / 2 * 220 };
+  return {
+    x: 32 + plant.x / props.scene.widthMeters * 1136,
+    y: 245 + plant.y / props.scene.heightMeters * 220,
+  };
 }
 
 function refreshOverviewPlants(): void {

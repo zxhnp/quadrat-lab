@@ -29,6 +29,15 @@ describe("样方几何规则", () => {
     expect(isInsideQuadrat({ ...plant, x: 24.5, y: 24.5 }, center)).toBe(true);
   });
 
+  it("绿化带同样采用计上不计下、计左不计右", () => {
+    const quadrat: Quadrat = { id: "greenbelt", index: 1, x: 3, y: .5, size: 1 };
+    const plant: Plant = { id: "boundary", kind: "dandelion", x: 3, y: .5, size: 1, angle: 0 };
+
+    expect(isInsideQuadrat(plant, quadrat)).toBe(true);
+    expect(isInsideQuadrat({ ...plant, x: 4 }, quadrat)).toBe(false);
+    expect(isInsideQuadrat({ ...plant, y: 1.5 }, quadrat)).toBe(false);
+  });
+
   it("绿化带样方保持同一水平线并按间距吸附", () => {
     const belt = generateScene("greenbelt", 5678);
     const first: Quadrat = { id: "first", index: 1, x: 3, y: 0.5, size: 1 };

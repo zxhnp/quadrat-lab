@@ -59,8 +59,8 @@ const isStandardGrassland = computed(() => sceneKind.value === "grassland" && gu
 const currentDensityText = computed(() => averageReady.value ? `${comparison.value.estimatedDensity.toFixed(2)} 株/m²` : "待计算");
 const formulaText = computed(() => {
   if (!summaries.value.length) return "选择样方后生成计算公式";
-  const values = summaries.value.map((item) => item.density.toFixed(2)).join(" + ");
-  return `(${values}) ÷ ${summaries.value.length} = ${comparison.value.estimatedDensity.toFixed(2)} 株/m²`;
+  const values = summaries.value.map((item) => item.density.toFixed(1)).join(" + ");
+  return `(${values}) ÷ ${summaries.value.length} =`;
 });
 const activeStep = computed(() => averageReady.value ? 4 : quadrats.value.length ? 3 : 2);
 const stepLabel = computed(() => {
@@ -104,7 +104,7 @@ function startSampling(): void {
   activeMode.value = sceneKind.value === "grassland" ? "free" : "equidistant";
   activeCanvasTool.value = "select";
   if (sceneKind.value === "grassland") sceneCanvasRef.value?.focusSamplingZoom();
-  ElMessage({ message: sceneKind.value === "grassland" ? "已放大到 400%，请拖动框选真实 1m × 1m 中心样方" : "请在绿化带中拖动框选第一个 1m × 1m 样方", type: "success" });
+  ElMessage({ message: sceneKind.value === "grassland" ? "已放大到 250%，请拖动框选真实 1m × 1m 中心样方" : "请在绿化带中拖动框选第一个 1m × 1m 样方", type: "success" });
 }
 
 function setCanvasTool(tool: CanvasTool): void {
@@ -144,11 +144,15 @@ function pushHistory(): void {
 }
 
 function handleCanvasClick(point: Point): void {
-  if (scene.value.kind === "grassland" && (point.x < 0 || point.x > 50 || point.y < 0 || point.y > 50)) {
+  const outsideScene = point.x < 0
+    || point.x > scene.value.widthMeters
+    || point.y < 0
+    || point.y > scene.value.heightMeters;
+  if (scene.value.kind === "grassland" && outsideScene) {
     setError("请在草地样地范围内选择样方");
     return;
   }
-  if (scene.value.kind === "greenbelt" && (point.x < 0 || point.x > 20 || point.y < 0 || point.y > 2)) {
+  if (scene.value.kind === "greenbelt" && outsideScene) {
     setError("请选择绿化带内部，不要点击乔木带或道路");
     return;
   }
@@ -343,8 +347,8 @@ function regenerate(): void {
           <h2 class="panel-title">场景选择</h2>
 
           <section class="scene-switcher" aria-label="实验场景">
-            <button class="scene-tab" :class="{ active: sceneKind === 'grassland' }" type="button" @click="chooseScene('grassland')"><span>草地</span><small>50m × 50m</small></button>
-            <button class="scene-tab" :class="{ active: sceneKind === 'greenbelt' }" type="button" @click="chooseScene('greenbelt')"><span>绿化带</span><small>20m × 2m</small></button>
+            <button class="scene-tab" :class="{ active: sceneKind === 'grassland' }" type="button" @click="chooseScene('grassland')"><span>草地</span><small>{{ sceneMeta.grassland.dimensions }}</small></button>
+            <button class="scene-tab" :class="{ active: sceneKind === 'greenbelt' }" type="button" @click="chooseScene('greenbelt')"><span>绿化带</span><small>{{ sceneMeta.greenbelt.dimensions }}</small></button>
           </section>
 
           <section class="specimen-section">
@@ -389,12 +393,22 @@ function regenerate(): void {
           <div v-if="selectedSummary" class="selected-sample"><div class="sample-heading"><span>样方 {{ selectedSummary.index }}</span><el-tag size="small" type="warning" effect="light">{{ selectedQuadratIds.length > 1 ? `已选 ${selectedQuadratIds.length} 个` : '已选中' }}</el-tag></div><div class="sample-focus"><div><strong>{{ selectedSummary.targetCount }}</strong><span>{{ plantMeta[meta.targetPlant].label }}个体</span></div><div><strong>{{ selectedSummary.density.toFixed(1) }}</strong><span>株/m²</span></div></div><div class="sample-meta"><span>面积 <b>{{ selectedSummary.area }}m²</b></span><span>边界 <b>计上不计下，计左不计右</b></span></div></div>
           <div v-else class="inspector-empty"><el-icon><Operation /></el-icon><strong>{{ quadrats.length ? '当前未选择样方' : '还没有选择样方' }}</strong><span>{{ quadrats.length ? '点击画布中的样方查看统计。' : '在中央场景中点击位置开始取样。' }}</span></div>
 
-          <section class="sample-list-section"><div class="section-label-row"><span>样方记录</span><span class="section-note">{{ summaries.length }} / {{ sceneKind === 'grassland' ? 5 : '∞' }}</span></div><div v-if="summaries.length" class="sample-list"><button v-for="row in summaries" :key="row.quadratId" class="sample-row" :class="{ active: selectedQuadratIdSet.has(row.quadratId) }" :data-quadrat-id="row.quadratId" type="button" @click="handleTableRowClick(row)"><span class="sample-number">{{ row.index }}</span><span class="sample-label">样方 {{ row.index }}</span><strong>{{ row.targetCount }} 株</strong><b>{{ row.density.toFixed(1) }}</b></button></div><div v-else class="sample-list-empty">完成取样后，样方数量与密度会显示在这里。</div></section>
+          <section class="sample-list-section" :class="{ 'results-visible': revealed }"><div class="section-label-row"><span>样方记录</span><span class="section-note">{{ summaries.length }} / {{ sceneKind === 'grassland' ? 5 : '∞' }}</span></div><div v-if="summaries.length" class="sample-list"><button v-for="row in summaries" :key="row.quadratId" class="sample-row" :class="{ active: selectedQuadratIdSet.has(row.quadratId) }" :data-quadrat-id="row.quadratId" type="button" @click="handleTableRowClick(row)"><span class="sample-number">{{ row.index }}</span><span class="sample-label">样方 {{ row.index }}</span><strong>{{ row.targetCount }} 株</strong><b>{{ row.density.toFixed(1) }} 株/m²</b></button></div><div v-else class="sample-list-empty">完成取样后，样方数量与密度会显示在这里。</div></section>
 
-          <section class="estimate-card" :class="{ ready: averageReady }"><div class="estimate-title"><span>平均种群密度</span><el-tag v-if="isStandardGrassland" size="small" type="success" effect="light">规范取样</el-tag></div><strong>{{ currentDensityText }}</strong><p>{{ averageReady ? formulaText : summaries.length ? '样方密度已自动统计，点击下方计算平均值' : '完成取样后生成计算过程' }}</p></section>
-          <div class="inspector-actions"><el-button class="wide-button" :disabled="!canAverage" :icon="CircleCheck" @click="calculateAverage">计算平均值</el-button><el-button class="wide-button outline-button" :disabled="!averageReady" :icon="View" @click="revealActual">揭晓真实结果</el-button></div>
+          <section class="estimate-card" :class="{ ready: averageReady }">
+            <div class="estimate-title"><span>平均种群密度</span><el-tag v-if="isStandardGrassland" size="small" type="success" effect="light">规范取样</el-tag></div>
+            <div class="estimate-calculation"><span class="estimate-formula" :title="formulaText">{{ formulaText }}</span><strong>{{ currentDensityText }}</strong></div>
+          </section>
+          <div class="inspector-actions"><el-button class="wide-button" :disabled="!canAverage" :icon="CircleCheck" @click="calculateAverage">计算平均值</el-button><el-button class="wide-button reveal-button" type="warning" :disabled="!averageReady" :icon="View" @click="revealActual">揭晓真实结果</el-button></div>
 
-          <div v-if="revealed" class="comparison-card"><div class="comparison-title"><span>真实值对比</span><el-tag size="small" type="warning">误差 {{ comparison.errorPercent.toFixed(1) }}%</el-tag></div><div class="comparison-line"><span>实际密度</span><strong>{{ comparison.actualDensity.toFixed(2) }} 株/m²</strong></div><div class="comparison-line"><span>样方法估算</span><strong>{{ comparison.estimatedDensity.toFixed(2) }} 株/m²</strong></div><div class="actual-counts"><div v-for="kind in specimenKinds" :key="kind"><span>{{ plantMeta[kind].label }}</span><b>{{ formatNumber(actualCountMap[kind]) }} 株</b></div></div></div>
+          <div v-if="revealed" class="comparison-card">
+            <div class="comparison-title"><span>真实结果</span><el-tag size="small" type="warning">误差 {{ comparison.errorPercent.toFixed(1) }}%</el-tag></div>
+            <div class="comparison-density-grid">
+              <div class="comparison-metric comparison-actual"><span>实际种群密度</span><strong>{{ comparison.actualDensity.toFixed(2) }} <small>株/m²</small></strong></div>
+              <div class="comparison-metric comparison-estimate"><span>样方法估算</span><strong>{{ comparison.estimatedDensity.toFixed(2) }} <small>株/m²</small></strong></div>
+            </div>
+            <div class="actual-counts"><div v-for="kind in specimenKinds" :key="kind" :class="{ target: kind === meta.targetPlant }"><span>{{ plantMeta[kind].label }}</span><b>{{ formatNumber(actualCountMap[kind]) }} 株</b></div></div>
+          </div>
         </aside>
       </main>
     </div>

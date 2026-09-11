@@ -15,15 +15,16 @@ test("样方实验主流程可加载并切换场景", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "样方实验" })).toBeVisible();
   await expect(page.getByRole("button", { name: /选取样方.*1m × 1m/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /草地 50m × 50m/ })).toBeVisible();
-  await page.getByRole("button", { name: /绿化带 20m × 2m/ }).click();
+  await expect(page.getByRole("button", { name: /草地 30m × 30m/ })).toBeVisible();
+  await page.getByRole("button", { name: /绿化带 10m × 2m/ }).click();
   await expect(page.getByAltText("绿化带场景底图")).toBeVisible();
   await expect(page.getByRole("button", { name: "等距铺满" })).toBeDisabled();
   const toolbar = page.getByRole("complementary", { name: "取样工具栏" });
   await expect(toolbar.getByRole("button", { name: "拖动画布" })).toHaveCount(0);
   await expect(toolbar.getByRole("button", { name: "放大", exact: true })).toHaveCount(0);
   await expect(toolbar.getByRole("button", { name: "缩小", exact: true })).toHaveCount(0);
-  await expect(page.locator(".greenbelt-overlay")).not.toContainText(/乔木带|道路|等距 3m/);
+  await expect(page.locator(".greenbelt-overlay")).toHaveCount(0);
+  await expect(page.locator(".canvas-caption")).not.toContainText("等距 3m 辅助线");
 });
 
 test("重叠样方只显示一次顶部消息", async ({ page }) => {
@@ -51,11 +52,12 @@ test("重叠样方只显示一次顶部消息", async ({ page }) => {
 test("绿化带可通过两个样方建立等距并铺满", async ({ page }) => {
   await page.setViewportSize({ width: 1256, height: 912 });
   await page.goto("/");
-  await page.getByRole("button", { name: /绿化带 20m × 2m/ }).click();
+  await page.getByRole("button", { name: /绿化带 10m × 2m/ }).click();
 
   const canvas = page.locator("svg.scene-canvas");
   await dragSample(page, canvas, 0.20, 0.60);
   const firstQuadrat = page.locator(".quadrats .quadrat rect").first();
+  await expect(firstQuadrat).toBeVisible();
   await expect.poll(async () => {
     const bounds = await firstQuadrat.boundingBox();
     return bounds ? Math.abs(bounds.width - bounds.height) : Number.POSITIVE_INFINITY;
@@ -63,11 +65,18 @@ test("绿化带可通过两个样方建立等距并铺满", async ({ page }) => 
   const firstQuadratBounds = await firstQuadrat.boundingBox();
   const canvasBounds = await canvas.boundingBox();
   if (!firstQuadratBounds || !canvasBounds) throw new Error("未找到绿化带样方或画布尺寸");
+  const quadratGeometryHeight = Number(await firstQuadrat.getAttribute("height"));
   expect(firstQuadratBounds.width).toBeCloseTo(firstQuadratBounds.height, 0);
+  expect(quadratGeometryHeight).toBeCloseTo(220 / 2, 5);
   const quadratCenterY = firstQuadratBounds.y + firstQuadratBounds.height / 2;
   const plantingBandCenterY = canvasBounds.y + canvasBounds.height * (355 / 700);
   expect(quadratCenterY).toBeCloseTo(plantingBandCenterY, 0);
-  await expect(page.locator(".quadrat-count-label").first()).toHaveText(/^\d+株$/);
+  const firstDensityLabel = page.locator(".quadrat-count-label").first();
+  await expect(firstDensityLabel).toHaveText(/^\d+(?:\.\d+)?株\/m²$/);
+  const firstDensityLabelBounds = await firstDensityLabel.boundingBox();
+  if (!firstDensityLabelBounds) throw new Error("未找到绿化带样方密度标识");
+  expect(firstDensityLabelBounds.x + firstDensityLabelBounds.width / 2).toBeCloseTo(firstQuadratBounds.x + firstQuadratBounds.width / 2, 0);
+  expect(firstDensityLabelBounds.y + firstDensityLabelBounds.height).toBeLessThan(firstQuadratBounds.y);
   const firstSampleCount = Number.parseInt((await page.locator(".sample-row strong").first().textContent()) ?? "", 10);
   await expect(page.getByTestId("selected-target-marker")).toHaveCount(firstSampleCount);
   const markerCenters = await page.locator(".selected-target-markers circle").evaluateAll((circles) => circles.map((circle) => {
@@ -80,13 +89,13 @@ test("绿化带可通过两个样方建立等距并铺满", async ({ page }) => 
     expect(center.y).toBeGreaterThanOrEqual(firstQuadratBounds.y);
     expect(center.y).toBeLessThanOrEqual(firstQuadratBounds.y + firstQuadratBounds.height);
   }
-  await dragSample(page, canvas, 0.275, 0.60);
+  await dragSample(page, canvas, 0.35, 0.60);
 
   await expect(page.locator(".sample-row")).toHaveCount(2);
   await expect(page.getByRole("button", { name: "等距铺满" })).toBeEnabled();
 
   await page.getByRole("button", { name: "等距铺满" }).click();
-  expect(await page.locator(".sample-row").count()).toBeGreaterThan(10);
+  expect(await page.locator(".sample-row").count()).toBeGreaterThan(4);
   const inspectorOverflow = await page.locator(".inspector-rail").evaluate((element) => ({
     clientHeight: element.clientHeight,
     scrollHeight: element.scrollHeight,
@@ -100,7 +109,7 @@ test("绿化带可通过两个样方建立等距并铺满", async ({ page }) => 
     overflowY: getComputedStyle(element).overflowY,
   }));
   expect(listOverflow.overflowY).toBe("auto");
-  expect(listOverflow.scrollHeight).toBeGreaterThan(listOverflow.clientHeight);
+  expect(listOverflow.scrollHeight).toBeGreaterThanOrEqual(listOverflow.clientHeight);
   await expect(page.getByRole("button", { name: "揭晓真实结果" })).toBeVisible();
 });
 
@@ -141,14 +150,15 @@ test("草地辅助线以开启时选中的样方为中心，后续选取时不�
   expect(guideGeometryAfterSelecting).toEqual(guideGeometryBefore);
 });
 
-test("草地在四倍缩放下可框选真实一米样方", async ({ page }) => {
+test("草地在二点五倍缩放下可框选真实一米样方", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "进入取样模式" }).click();
-  await expect(page.getByRole("button", { name: "重置草地缩放" })).toHaveText("400%");
+  await expect(page.getByRole("button", { name: "重置草地缩放" })).toHaveText("250%");
   const distributionLayer = page.locator("canvas.distribution-layer");
   await expect(distributionLayer).toBeVisible();
-  await expect(distributionLayer).toHaveAttribute("data-rendered-target-count", "11250");
-  await expect(distributionLayer).toHaveAttribute("data-plant-symbol-screen-scale", "2.4");
+  await expect(distributionLayer).toHaveAttribute("data-rendered-target-count", "4500");
+  await expect(distributionLayer).toHaveAttribute("data-rendered-plant-count", "5580");
+  await expect(distributionLayer).toHaveAttribute("data-plant-symbol-screen-scale", "2.1");
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   const distributionBeforeSelection = await distributionLayer.evaluate((element) => element.toDataURL());
 
@@ -161,8 +171,8 @@ test("草地在四倍缩放下可框选真实一米样方", async ({ page }) => 
   await dragSample(page, viewport, 0.25, 0.25, 20);
   await expect(page.locator(".sample-row")).toHaveCount(1);
   const quadrat = page.locator("svg .quadrats .quadrat rect").first();
-  expect(Number(await quadrat.getAttribute("width"))).toBeCloseTo(15.2, 5);
-  expect(Number(await quadrat.getAttribute("height"))).toBeCloseTo(15.2, 5);
+  expect(Number(await quadrat.getAttribute("width"))).toBeCloseTo(760 / 30, 5);
+  expect(Number(await quadrat.getAttribute("height"))).toBeCloseTo(760 / 30, 5);
   const quadratBounds = await quadrat.boundingBox();
   expect(quadratBounds?.width).toBeGreaterThan(80);
   expect(quadratBounds?.width).toBeLessThan(110);
@@ -201,7 +211,7 @@ test("草地在四倍缩放下可框选真实一米样方", async ({ page }) => 
   expect(textAtOverview.height).toBeGreaterThan(13);
 
   await page.getByRole("button", { name: "进入取样模式" }).click();
-  await expect(page.getByRole("button", { name: "重置草地缩放" })).toHaveText("400%");
+  await expect(page.getByRole("button", { name: "重置草地缩放" })).toHaveText("250%");
   const markedCount = Number(await page.locator(".sample-focus strong").first().textContent());
   expect(markedCount).toBeGreaterThanOrEqual(0);
   await expect(page.getByTestId("selected-target-marker")).toHaveCount(markedCount);
@@ -209,10 +219,10 @@ test("草地在四倍缩放下可框选真实一米样方", async ({ page }) => 
 
   const fontSizeAtSamplingZoom = await densityText.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
   await page.getByRole("button", { name: "放大草地" }).click();
-  await expect(page.getByRole("button", { name: "重置草地缩放" })).toHaveText("600%");
+  await expect(page.getByRole("button", { name: "重置草地缩放" })).toHaveText("400%");
   const fontSizeAboveSamplingZoom = await densityText.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
-  expect(fontSizeAtSamplingZoom * 4).toBeCloseTo(14, 5);
-  expect(fontSizeAboveSamplingZoom * 6).toBeCloseTo(14, 2);
+  expect(fontSizeAtSamplingZoom * 2.5).toBeCloseTo(12.25, 5);
+  expect(fontSizeAboveSamplingZoom * 4).toBeCloseTo(14, 2);
 
   await page.getByRole("button", { name: "辅助线" }).click();
   const guides = page.locator(".five-point-guide rect");
@@ -264,7 +274,7 @@ test("草地五点样方的左侧两个密度标签在各比例下保持左置",
   await expectLeftLabelsAtCurrentZoom();
 });
 
-test("独立工具栏与右侧操作按钮保持同列对齐", async ({ page }) => {
+test("独立工具栏保持同列且右侧操作按钮并排", async ({ page }) => {
   await page.goto("/");
   const toolButtons = page.locator(".sampling-toolbar .toolbar-button");
   const firstTool = await toolButtons.nth(0).boundingBox();
@@ -273,7 +283,98 @@ test("独立工具栏与右侧操作按钮保持同列对齐", async ({ page }) 
   const firstInspector = await inspectorButtons.nth(0).boundingBox();
   const secondInspector = await inspectorButtons.nth(1).boundingBox();
   expect(firstTool?.x).toBe(secondTool?.x);
-  expect(firstInspector?.x).toBe(secondInspector?.x);
+  expect(firstInspector?.y).toBe(secondInspector?.y);
+  expect(secondInspector?.x).toBeGreaterThan(firstInspector?.x ?? Number.POSITIVE_INFINITY);
+  expect(firstInspector?.height).toBeGreaterThanOrEqual(44);
+  expect(secondInspector?.height).toBeGreaterThanOrEqual(44);
+});
+
+test("右侧估算区使用紧凑公式并突出真实结果", async ({ page }) => {
+  await page.setViewportSize({ width: 1569, height: 912 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "进入取样模式" }).click();
+  await dragSample(page, page.locator(".scene-viewport"), .5, .5, 18);
+
+  const estimateCard = page.locator(".estimate-card");
+  const estimateBounds = await estimateCard.boundingBox();
+  expect(estimateBounds?.height).toBeLessThan(90);
+  await expect(estimateCard.locator(".estimate-title")).toContainText("平均种群密度");
+  await expect(estimateCard.locator(".estimate-formula")).toContainText("÷ 1 =");
+  await expect(estimateCard.locator("p")).toHaveCount(0);
+
+  const actionButtons = page.locator(".inspector-actions .el-button");
+  const firstAction = await actionButtons.nth(0).boundingBox();
+  const secondAction = await actionButtons.nth(1).boundingBox();
+  expect(firstAction?.y).toBe(secondAction?.y);
+
+  await page.getByRole("button", { name: "计算平均值" }).click();
+  await page.getByRole("button", { name: "揭晓真实结果" }).click();
+  const comparisonCard = page.locator(".comparison-card");
+  await expect(comparisonCard.getByText("真实结果")).toBeVisible();
+  await expect(comparisonCard.getByText("4,500 株")).toBeVisible();
+  const densityMetrics = comparisonCard.locator(".comparison-metric");
+  await expect(densityMetrics).toHaveCount(2);
+  const densityMetricBoxes = await densityMetrics.evaluateAll((elements) => elements.map((element) => {
+    const bounds = element.getBoundingClientRect();
+    const value = element.querySelector("strong");
+    return { y: bounds.y, fontSize: value ? Number.parseFloat(getComputedStyle(value).fontSize) : 0 };
+  }));
+  expect(densityMetricBoxes[0]?.y).toBe(densityMetricBoxes[1]?.y);
+  expect(densityMetricBoxes.every((metric) => metric.fontSize >= 22)).toBe(true);
+});
+
+test("样方记录固定显示五条并为密度标注单位", async ({ page }) => {
+  await page.setViewportSize({ width: 1569, height: 912 });
+  await page.goto("/");
+  const samplePanel = page.locator(".sample-list-section");
+  const panelStyle = await samplePanel.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return { height: bounds.height, borderStyle: style.borderStyle, backgroundImage: style.backgroundImage };
+  });
+  expect(panelStyle.height).toBeCloseTo(294, 0);
+  expect(panelStyle.borderStyle).toBe("solid");
+  expect(panelStyle.backgroundImage).not.toBe("none");
+  await expect(samplePanel.getByText("完成取样后，样方数量与密度会显示在这里。")).toBeVisible();
+
+  await page.getByRole("button", { name: "进入取样模式" }).click();
+  const viewport = page.locator(".scene-viewport");
+  for (const [xRatio, yRatio] of [[.12, .15], [.3, .15], [.5, .15], [.7, .15], [.88, .15], [.25, .55], [.72, .55]]) {
+    await dragSample(page, viewport, xRatio, yRatio, 12);
+  }
+  await expect(page.locator(".sample-row")).toHaveCount(7);
+  await expect(page.locator(".sample-row b")).toHaveText(Array.from({ length: 7 }, () => /\d+\.\d 株\/m²/));
+  const listMetrics = await page.locator(".sample-list").evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const rows = Array.from(element.querySelectorAll(".sample-row"));
+    return {
+      fullyVisibleRows: rows.filter((row) => {
+        const rowBounds = row.getBoundingClientRect();
+        return rowBounds.top >= bounds.top && rowBounds.bottom <= bounds.bottom;
+      }).length,
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    };
+  });
+  expect(listMetrics.fullyVisibleRows).toBe(5);
+  expect(listMetrics.scrollHeight).toBeGreaterThan(listMetrics.clientHeight);
+});
+
+test("顶部实验步骤相对整条顶栏居中", async ({ page }) => {
+  await page.setViewportSize({ width: 1608, height: 912 });
+  await page.goto("/");
+
+  const headerBounds = await page.locator(".topbar").boundingBox();
+  const stepBounds = await page.locator(".progress-step").evaluateAll((steps) => {
+    const first = steps[0]?.getBoundingClientRect();
+    const last = steps.at(-1)?.getBoundingClientRect();
+    return first && last ? { left: first.left, right: last.right } : null;
+  });
+  if (!headerBounds || !stepBounds) throw new Error("未找到顶栏或实验步骤导航");
+
+  const headerCenter = headerBounds.x + headerBounds.width / 2;
+  const stepsCenter = (stepBounds.left + stepBounds.right) / 2;
+  expect(stepsCenter).toBeCloseTo(headerCenter, 0);
 });
 
 test("光标下拉菜单可全选样方并取消选择", async ({ page }) => {
@@ -324,14 +425,14 @@ test("切换场景后动态植物层会更新分布", async ({ page }) => {
   await page.waitForTimeout(300);
 
   const before = await layer.evaluate((canvas) => canvas.toDataURL());
-  await page.getByRole("button", { name: /绿化带 20m × 2m/ }).click();
+  await page.getByRole("button", { name: /绿化带 10m × 2m/ }).click();
   await page.waitForTimeout(300);
   const after = await layer.evaluate((canvas) => canvas.toDataURL());
 
   expect(after).not.toBe(before);
 
   await expect(page.getByAltText("绿化带场景底图")).toBeVisible();
-  await expect(layer).toHaveAttribute("data-rendered-plant-count", "430");
+  await expect(layer).toHaveAttribute("data-rendered-plant-count", "215");
 });
 
 test("场景选择使用简洁文字卡片，工具栏重置会恢复视图并生成新分布", async ({ page }) => {
@@ -350,7 +451,7 @@ test("场景选择使用简洁文字卡片，工具栏重置会恢复视图并�
   await expect(page.getByText("已重置并生成新的草地植物分布").last()).toBeVisible();
   await expect.poll(() => layer.evaluate((canvas) => canvas.toDataURL())).not.toBe(grasslandBefore);
 
-  await page.getByRole("button", { name: /绿化带 20m × 2m/ }).click();
+  await page.getByRole("button", { name: /绿化带 10m × 2m/ }).click();
   await page.waitForTimeout(300);
   const greenbeltBefore = await layer.evaluate((canvas) => canvas.toDataURL());
   await page.getByRole("button", { name: "重置", exact: true }).click();
@@ -375,4 +476,38 @@ test("放大后可切换拖动画布工具进行平移", async ({ page }) => {
   const after = await viewport.evaluate((element) => ({ left: element.scrollLeft, top: element.scrollTop }));
   expect(after.left).toBeGreaterThan(before.left);
   expect(after.top).toBeGreaterThan(before.top);
+});
+
+test.describe("高 DPI 短屏适配", () => {
+  test.use({ viewport: { width: 1280, height: 608 }, deviceScaleFactor: 1.5 });
+
+  test("150% 缩放下可滚动查看完整工作区", async ({ page }) => {
+    await page.goto("/");
+    expect(await page.evaluate(() => window.devicePixelRatio)).toBe(1.5);
+    await expect(page.getByRole("heading", { name: "样方实验" })).toBeVisible();
+
+    const initialLayout = await page.evaluate(() => ({
+      viewportHeight: window.innerHeight,
+      documentHeight: document.documentElement.scrollHeight,
+      documentOverflowY: getComputedStyle(document.documentElement).overflowY,
+      appBottom: document.querySelector(".app-shell")?.getBoundingClientRect().bottom ?? 0,
+    }));
+    expect(initialLayout.viewportHeight).toBe(608);
+    expect(initialLayout.documentHeight).toBeGreaterThan(initialLayout.viewportHeight);
+    expect(initialLayout.documentOverflowY).toBe("auto");
+    expect(initialLayout.appBottom).toBe(720);
+
+    await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" }));
+    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+    await page.locator(".inspector-actions").scrollIntoViewIfNeeded();
+    await expect(page.getByRole("button", { name: "揭晓真实结果" })).toBeVisible();
+
+    const inspectorOverflow = await page.locator(".inspector-rail").evaluate((element) => ({
+      overflowY: getComputedStyle(element).overflowY,
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    expect(inspectorOverflow.overflowY).toBe("auto");
+    expect(inspectorOverflow.scrollHeight).toBeGreaterThanOrEqual(inspectorOverflow.clientHeight);
+  });
 });

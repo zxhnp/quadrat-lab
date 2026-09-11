@@ -19,7 +19,7 @@ export const sceneMeta: Record<SceneKind, {
   grassland: {
     label: "草地",
     subtitle: "天然草地 · 斑块式分布",
-    dimensions: "50m × 50m",
+    dimensions: "30m × 30m",
     samplingLabel: "五点取样法",
     targetPlant: "artemisia",
     intro: "在正方形样地中随机选择样方，用五点法观察取样代表性。",
@@ -27,7 +27,7 @@ export const sceneMeta: Record<SceneKind, {
   greenbelt: {
     label: "绿化带",
     subtitle: "道路绿化 · 横向等距分布",
-    dimensions: "20m × 2m",
+    dimensions: "10m × 2m",
     samplingLabel: "等距取样法",
     targetPlant: "dandelion",
     intro: "沿绿化带长度方向等距布置样方，观察样方数量对估算的影响。",
