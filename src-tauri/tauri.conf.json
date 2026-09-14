@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "QuadratLab",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "identifier": "com.quadratlab.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -39,11 +39,15 @@
     ],
     "windows": {
       "wix": {
-        "language": "zh-CN"
+        "language": "zh-CN",
+        "template": "windows/main.wxs",
+        "upgradeCode": "e5ec071b-5c49-5922-a777-133cadd56a48"
       },
       "nsis": {
         "installMode": "currentUser",
-        "displayLanguageSelector": false
+        "displayLanguageSelector": false,
+        "startMenuFolder": "QuadratLab",
+        "installerHooks": "windows/installer-hooks.nsh"
       }
     }
   }
