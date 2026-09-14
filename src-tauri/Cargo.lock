@@ -2376,7 +2376,7 @@ dependencies = [
 
 [[package]]
 name = "quadrat-lab"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "tauri",
  "tauri-build",
